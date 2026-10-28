@@ -1,0 +1,32 @@
+adjacent: false
+clustering: build_edges
+emb_dim: 8
+emb_hidden: 512
+endcaps: true
+factor: 0.3
+in_channels: 12
+knn_train: 20
+knn_val: 100
+layerless: true
+layerwise: false
+lr: 0.002
+margin: 1
+n_workers: 1
+nb_layer: 6
+noise: false
+overwrite: true
+patience: 5
+pt_min: 0
+r_train: 1
+r_val: 1.
+randomisation: 2
+regime:
+- rp
+- hnm
+- ci
+train_split:
+- 8
+- 1
+- 1
+warmup: 500
+weight: 4

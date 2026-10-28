@@ -1,0 +1,44 @@
+{
+  "schema": "clas12_baseline_sources_v1",
+  "import_date": "2026-10-28",
+  "fm4npp_audited": {
+    "repository": "https://github.com/FM4NPP/PP_collision",
+    "commit": "863cb28ad798d4753569737563a754cb2a0e6284",
+    "external_baseline_adaptations_found": false
+  },
+  "sources": [
+    {
+      "name": "EggNet",
+      "repository": "https://github.com/exatrkx/EggNet.git",
+      "commit": "e2bd117c653ba527635906c527b97f865b39f1c0",
+      "directory": "vendor/eggnet",
+      "license": "Apache-2.0",
+      "modifications": []
+    },
+    {
+      "name": "Exa.TrkX publication pipeline",
+      "repository": "https://github.com/exatrkx/exatrkx-iml2020.git",
+      "commit": "a22e1b7a0c81527da049d0a28087b7d1c96854a8",
+      "directory": "vendor/exatrkx",
+      "license": "Apache-2.0",
+      "modifications": []
+    },
+    {
+      "name": "OneFormer3D",
+      "repository": "https://github.com/filaPro/oneformer3d.git",
+      "commit": "e2a9dd2656d4b2806853c026cab7bc63201f8814",
+      "directory": "vendor/oneformer3d",
+      "license": "CC-BY-NC-4.0",
+      "modifications": []
+    }
+  ],
+  "reconstructions": {
+    "semantic_gnns": {
+      "source": "https://arxiv.org/html/2508.14087v1",
+      "status": "our_paper_based_reconstruction",
+      "operator_dependency": "torch-geometric==2.4.0",
+      "implementation": "src/clas12_benchmarks/graphs.py"
+    }
+  },
+  "publication_revision_equivalence": "Not established; these source revisions are pinned starting points, not claimed FM4NPP benchmark revisions."
+}

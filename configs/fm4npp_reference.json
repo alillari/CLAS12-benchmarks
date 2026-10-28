@@ -1,0 +1,57 @@
+{
+  "reference_only": true,
+  "source": "https://arxiv.org/html/2508.14087v1",
+  "section": "Appendix C, Comparative Methods for Downstream Tasks",
+  "exact_authors_code_available": false,
+  "preprocessing_reference": {
+    "detector": "sPHENIX TPC; not CLAS12 geometry",
+    "eta_scale": 1.96,
+    "radius": "nearest one of 48 layer radii, then layer index / 48",
+    "azimuth": ["cos(phi)", "sin(phi)"]
+  },
+  "eggnet": {
+    "task": "track_finding",
+    "input_width": 12,
+    "coordinate_neighbors": 2,
+    "dynamic_graph_iterations": 4,
+    "message_passing_rounds_per_iteration": 4,
+    "graph_neighbors": 10,
+    "mlp_hidden_layers": 2,
+    "mlp_hidden_width": 64,
+    "embedding_dim": 24,
+    "loss": "hinge; full sampling and reduction choices unspecified",
+    "margin": 1.0,
+    "epochs": 300,
+    "dbscan": {"eps": 1.0, "min_samples": 2}
+  },
+  "exatrkx": {
+    "task": "track_finding",
+    "input_width": 5,
+    "truth_edges": "all distinct same-track pairs rather than consecutive neighbors",
+    "embedding_distance_cut": 2.0,
+    "filter_probability_cut": 0.675,
+    "gnn_probability_cuts_reported": [0.9, 0.8],
+    "architecture": "embedding MLP, filtering MLP, Interaction Network",
+    "exact_code_revision": null
+  },
+  "semantic_gnns": {
+    "operators": ["GATConv", "GCNConv", "GraphConv", "SAGEConv"],
+    "tasks": ["particle_identification", "noise_tagging"],
+    "input_width_with_energy": 5,
+    "geometry_neighbors": 50,
+    "strict_distance_cut": 1.0,
+    "directed": true,
+    "encoder_hidden_widths": [256, 256],
+    "graph_layers": 6,
+    "classifier_hidden_widths": [128, 64],
+    "loss": "cross_entropy",
+    "epochs": 200
+  },
+  "oneformer3d": {
+    "tasks": ["particle_identification", "noise_tagging"],
+    "configuration_family": "S3DIS",
+    "tpc_voxel_grid_shape": [64, 64, 48],
+    "architecture": "sparse convolution U-Net and query decoder; semantic-only loss/prediction adaptation"
+  },
+  "not_reported_completely": ["external source commits", "full optimizer recipes", "all architecture flags", "sampling and loss reductions"]
+}

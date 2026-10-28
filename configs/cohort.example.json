@@ -1,0 +1,20 @@
+{
+  "schema": "clas12_baseline_cohort_v1",
+  "datasets": {
+    "clas12_event": {
+      "root": "/REPLACE/with/the/canonical/event/dataset",
+      "source_split": "pretrain",
+      "input_layout": "xyz",
+      "eta_scale": 1.0,
+      "radius_scale": 1.0,
+      "metadata_sha256": "REPLACE_WITH_METADATA_SHA256",
+      "samples_sha256": "REPLACE_WITH_SAMPLES_PRETRAIN_JSONL_SHA256",
+      "extra_targets": []
+    }
+  },
+  "roles": {
+    "train": [{"dataset": "clas12_event", "index": 0}],
+    "val": [{"dataset": "clas12_event", "index": 1}],
+    "test": [{"dataset": "clas12_event", "index": 2}]
+  }
+}

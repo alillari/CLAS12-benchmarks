@@ -16,7 +16,24 @@ def write_json(path, value):
     Path(path).write_text(json.dumps(value, indent=2, sort_keys=True, allow_nan=False) + "\n")
 
 
-def prepare(root, output, train=10000, val=1000, test=2000, seed=1337):
+def draw_excluding(rng, population, count, excluded):
+    excluded = set(excluded)
+    if count > population - len(excluded):
+        raise ValueError("Not enough unused source events")
+    selected = []
+    while len(selected) < count:
+        batch = rng.choice(population, size=min(population, count - len(selected) + 100), replace=False)
+        for value in batch:
+            value = int(value)
+            if value not in excluded:
+                selected.append(value)
+                excluded.add(value)
+                if len(selected) == count:
+                    break
+    return selected
+
+
+def prepare(root, output, train=10000, val=1000, test=2000, seed=1337, extend_from=None):
     root, output = Path(root), Path(output)
     if output.exists():
         raise FileExistsError(output)
@@ -25,11 +42,33 @@ def prepare(root, output, train=10000, val=1000, test=2000, seed=1337):
     metadata = {"schema": "clas12_benchmark_subset_v1", "source_root": str(root),
                 "source_metadata_sha256": file_sha256(root / "metadata.json"),
                 "seed": seed, "source_splits": {}, "selection": "uniform rows without replacement; no truth or size cuts"}
+    previous = None
+    preserved = {}
+    if extend_from:
+        previous = Cohort(Path(extend_from) / "cohort.json")
+        previous_meta = json.loads((Path(extend_from) / "metadata.json").read_text())
+        if previous_meta["source_metadata_sha256"] != metadata["source_metadata_sha256"]:
+            raise ValueError("Parent source metadata changed")
+        for role, members in previous.roles.items():
+            preserved[role] = [previous_meta["source_splits"][previous.datasets[m["dataset"]][0]["source_split"]]["indices"][m["index"]]
+                               for m in members]
+        if train != len(preserved["train"]) or val < len(preserved["val"]):
+            raise ValueError("Extension must preserve train and retain previous validation")
+        metadata.update(parent_cohort_sha256=previous.sha256,
+            selection="preserve training and old validation; expand validation uniformly; fresh test excludes all previous test events",
+            previous_test_indices_excluded=preserved["test"])
     roles, datasets, identities = {}, {}, set()
     train_xyz = []
     for split, counts in (("pretrain", (train, val)), ("test", (test,))):
         features = RaggedMmap(root / f"features_{split}", mode="r")
-        indices = rng.choice(len(features), size=sum(counts), replace=False)
+        if previous:
+            if split == "pretrain":
+                new_val = draw_excluding(rng, len(features), val - len(preserved["val"]), preserved["train"] + preserved["val"])
+                indices = preserved["train"] + preserved["val"] + new_val
+            else:
+                indices = draw_excluding(rng, len(features), test, preserved["test"])
+        else:
+            indices = rng.choice(len(features), size=sum(counts), replace=False)
         # Assign train/val before sorting; neither role is an index-range slice.
         assigned = {int(i): ("train" if j < train else "val") if split == "pretrain" else "test"
                     for j, i in enumerate(indices)}
@@ -56,6 +95,8 @@ def prepare(root, output, train=10000, val=1000, test=2000, seed=1337):
         print(f"{split}: froze {len(ordered)} of {n_rows} events", flush=True)
         metadata["source_splits"][split] = {"n_events": n_rows, "indices": ordered,
             "samples_sha256": digest.hexdigest()}
+        if previous and digest.hexdigest() != previous_meta["source_splits"][split]["samples_sha256"]:
+            raise ValueError("Parent sample identities changed")
         arrays = {name: RaggedMmap(root / f"{name}_{split}", mode="r") for name in
                   ("features", "seg_target", "coatjava_seg_pred")}
         for name, array in arrays.items():
@@ -80,6 +121,10 @@ def prepare(root, output, train=10000, val=1000, test=2000, seed=1337):
         raise ValueError("Invalid train coordinates")
     scales = {"eta_scale": max(float(np.max(np.abs(np.arcsinh(xyz[:, 2] / radius)))), 1e-6),
               "radius_scale": float(np.max(radius))}
+    if previous:
+        old_scales = previous_meta["normalization"]
+        if any(scales[key] != old_scales[key] for key in scales):
+            raise ValueError("Training normalization changed during extension")
     metadata["normalization"] = dict(scales, fitted_on="train only; max absolute eta and transverse radius")
     write_json(output / "metadata.json", metadata)
     for spec in datasets.values():
@@ -113,5 +158,6 @@ if __name__ == "__main__":
     p.add_argument("--val", type=int, default=1000)
     p.add_argument("--test", type=int, default=2000)
     p.add_argument("--seed", type=int, default=1337)
+    p.add_argument("--extend-from", help="Previous prepared cohort directory; preserve train and use fresh test events")
     args = p.parse_args()
     prepare(**vars(args))

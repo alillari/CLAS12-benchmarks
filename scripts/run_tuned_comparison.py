@@ -19,22 +19,32 @@ def paired_bootstrap(tuned_path, frozen_path, seed=1337, replicates=1000):
     a, b = read(tuned_path), read(frozen_path)
     if len(a) != len(b) or any(x["identity"] != y["identity"] for x, y in zip(a, b)):
         raise ValueError("Paired evaluation identities differ")
+    if not a or replicates < 1:
+        raise ValueError("Paired bootstrap requires events and positive replicates")
     columns = ("n_matched_tracks", "n_true_tracks", "n_pred_tracks", "ari_signal")
     x = np.array([[np.nan if row[key] is None else row[key] for key in columns] for row in a])
     y = np.array([[np.nan if row[key] is None else row[key] for key in columns] for row in b])
     rng = np.random.default_rng(seed)
     draws = []
+    def ratio(num, den):
+        return np.divide(num, den, out=np.full_like(num, np.nan), where=den != 0)
+    def event_mean(values):
+        return ratio(np.nansum(values, axis=1), np.isfinite(values).sum(axis=1))
     for begin in range(0, replicates, 32):
         index = rng.integers(len(a), size=(min(32, replicates - begin), len(a)))
         xs, ys = x[index], y[index]
         xv, yv = xs[:, :, :3].sum(1), ys[:, :, :3].sum(1)
-        draws.extend(np.column_stack((xv[:, 0] / xv[:, 1] - yv[:, 0] / yv[:, 1],
-            xv[:, 0] / xv[:, 2] - yv[:, 0] / yv[:, 2],
-            np.nanmean(xs[:, :, 3], axis=1) - np.nanmean(ys[:, :, 3], axis=1))).tolist())
-    bounds = np.percentile(draws, [2.5, 97.5], axis=0)
+        draws.extend(np.column_stack((ratio(xv[:, 0], xv[:, 1]) - ratio(yv[:, 0], yv[:, 1]),
+            ratio(xv[:, 0], xv[:, 2]) - ratio(yv[:, 0], yv[:, 2]),
+            event_mean(xs[:, :, 3]) - event_mean(ys[:, :, 3]))).tolist())
+    values = np.asarray(draws)
+    intervals, defined = {}, {}
+    for i, name in enumerate(("track_efficiency_global", "track_purity_global", "ari_signal")):
+        finite = values[:, i][np.isfinite(values[:, i])]
+        intervals[name] = np.percentile(finite, [2.5, 97.5]).tolist() if len(finite) else None
+        defined[name] = len(finite)
     return {"unit": "event; same resampled indices for both methods", "replicates": replicates, "seed": seed,
-        "delta_95_percent_intervals": {name: bounds[:, i].tolist() for i, name in enumerate(
-            ("track_efficiency_global", "track_purity_global", "ari_signal"))}}
+        "delta_95_percent_intervals": intervals, "defined_resamples": defined}
 
 
 def main():

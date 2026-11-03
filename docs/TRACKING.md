@@ -133,3 +133,48 @@ bootstrap intervals. Parent training identities, normalized inputs, truth,
 architecture sources and checkpoint hashes must remain compatible. Frozen
 inference can also be invoked through `python -m clas12_benchmarks.evaluate_frozen`.
 All comparison outputs stay under the external output directory.
+
+## Nested training-label sweeps
+
+Prepare nested budgets around an existing cohort with the parent training size
+included. The default budgets are 100, 1,000, 10,000 and 100,000 training events:
+
+```bash
+python -m clas12_benchmarks.prepare_label_sweep /absolute/path/native_data \
+  /absolute/path/previous/cohort "$RUN_ROOT/sweep_cohorts" --seed 1337
+python scripts/run_label_sweep.py --method eggnet \
+  --cohorts "$RUN_ROOT/sweep_cohorts" \
+  --config configs/label_budget_sweep_20261103.json \
+  --metrics /absolute/path/CLAS12/train/downstream/track_finding_metrics.py \
+  --output "$RUN_ROOT/eggnet_sweep"
+```
+
+Run the second command with `--method exatrkx` and a separate output directory
+for the other pipeline. Arms run sequentially to avoid competing for the GPU.
+The runner's `--budgets` option can select prepared manifests by training size.
+Preparation preserves fixed validation/evaluation identities and order, nests
+training members and fits normalization separately on each training subset.
+Budgets count fully labeled training events; fixed validation labels are additional.
+
+The supplied recipe fixes optimizer updates per stage across budgets. Consequently,
+the number of passes through the data decreases as the label budget grows. This
+controls updates within each architecture, not training to convergence or compute
+across architectures. Selected checkpoints can have seen fewer distinct events
+than the available budget; actual exposure is included in the report.
+
+The runner writes `sweep_progress.json`, `sweep_partial.json` and
+`sweep_summary.json`; each arm contains `run/` and `audit.json`. Summaries include
+95% event-bootstrap intervals. These intervals describe evaluation sampling
+uncertainty conditional on trained weights, not seed or training-subset variance.
+
+```bash
+python scripts/plot_label_sweep.py \
+  --eggnet "$RUN_ROOT/eggnet_sweep/sweep_summary.json" \
+  --exatrkx "$RUN_ROOT/exatrkx_sweep/sweep_summary.json" \
+  --output "$RUN_ROOT/label_sweep.png"
+```
+
+The plot shows signal ARI, global track purity and global track efficiency,
+conditional bootstrap bands and stored COATJAVA reference values. Install
+Matplotlib separately for plotting. Keep plots and their input summaries with the
+external run artifacts.

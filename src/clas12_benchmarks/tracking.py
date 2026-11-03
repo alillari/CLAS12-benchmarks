@@ -207,6 +207,7 @@ def train_stage(model, name, events, validation, loss_fn, config, output, device
         if device.type == "cuda":
             torch.cuda.set_rng_state_all([x.cpu() for x in state["cuda_rng"]])
     losses = []
+    explicit_validation_steps = set(config.get("validation_steps", []))
     started = time.monotonic()
     for step in range(start, config["steps_per_stage"]):
         if step and step % len(events) == 0:
@@ -225,7 +226,7 @@ def train_stage(model, name, events, validation, loss_fn, config, output, device
         if (step + 1) % 100 == 0:
             print(json.dumps({"stage": name, "step": step + 1, "train_loss": float(np.mean(losses[-100:])),
                 "grad_norm": float(norm), "elapsed_seconds": round(time.monotonic() - started, 2)}), flush=True)
-        if (step + 1) % config["validation_interval"] == 0 or step + 1 == config["steps_per_stage"]:
+        if (step + 1) % config["validation_interval"] == 0 or step + 1 == config["steps_per_stage"] or step + 1 in explicit_validation_steps:
             model.eval()
             cuda_devices = [device.index if device.index is not None else torch.cuda.current_device()] if device.type == "cuda" else []
             # Random-pair validation must be repeatable and not perturb training RNG.

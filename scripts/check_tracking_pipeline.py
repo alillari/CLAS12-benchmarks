@@ -21,6 +21,7 @@ def main():
     parser.add_argument("--output", required=True)
     parser.add_argument("--metrics", required=True)
     parser.add_argument("--device", default="cpu")
+    parser.add_argument("--config", default=str(ROOT / "configs/first_real_runs.json"))
     args = parser.parse_args()
     output = Path(args.output)
     root = output / "fixture"
@@ -38,8 +39,10 @@ def main():
         (root / f"samples_{split}.jsonl").write_text("".join(json.dumps({"source_file": split + ".hipo",
             "event": i, "sample_mode": "event"}) + "\n" for i in range(12)))
     prepare(root, output / "cohort", train=5, val=3, test=3)
-    config = json.loads((ROOT / "configs/first_real_runs.json").read_text())
+    config = json.loads(Path(args.config).read_text())
     config.update(steps_per_stage=4, validation_interval=2, checkpoint_validation_events=3)
+    if "warmup_steps" in config:
+        config["warmup_steps"] = 1
     config["eggnet"].update(dbscan_eps=[.1, .5], dbscan_min_samples=[2])
     config["exatrkx"]["gnn_cuts"] = [.3, .7]
     write_json(output / "config.json", config)

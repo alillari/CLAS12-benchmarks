@@ -19,7 +19,7 @@ The FM4NPP authors' external-baseline adaptations were not present in the public
 archive. These are upstream source imports plus our new integration, **not a
 recovered copy of the authors' private benchmark code**. See [tracking
 usage](docs/TRACKING.md) for cohort preparation, training, shared CLAS12 evaluation and
-prediction auditing.
+prediction auditing. Frozen comparisons and corrected-loss recipes are also supported.
 
 `sources.lock.json` pins imported upstream revisions. Imports use Git subtrees
 without squashing, retaining original commits and licenses. The upstream revision

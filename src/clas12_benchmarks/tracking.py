@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import random
@@ -76,15 +77,44 @@ def embedding_loss(z, labels, margin=1., max_pairs=2000000):
     return torch.stack(terms).mean()
 
 
-def edge_loss(logits, truth):
+def eggnet_contrastive_loss(z, labels, margin=1., max_pairs=2000000, k=10, random_pairs_per_node=10):
+    """Upstream Euclidean squared hinge, with signal/kNN/random term means.
+
+    CLAS12 adaptation: exclude self pairs and never label background positive.
+    Random budget scales with event size rather than the TrackML hit count.
+    """
+    n = len(z)
+    if n * (n - 1) // 2 > max_pairs:
+        raise ValueError("Event exceeds explicit all-pairs limit; no point truncation")
+    if n < 2:
+        return z.sum() * 0
+    pairs = torch.triu_indices(n, n, offset=1, device=z.device)
+    signal = pairs[:, pair_labels(labels, pairs)]
+    hard = neighbor_edges(z.detach(), k)
+    random_pairs = torch.randint(n, (2, n * random_pairs_per_node), device=z.device)
+    random_pairs = random_pairs[:, random_pairs[0] != random_pairs[1]]
+    terms = []
+    for edges in (signal, hard, random_pairs):
+        if not edges.numel():
+            terms.append(z.sum() * 0)
+            continue
+        distance = ((z[edges[0]] - z[edges[1]]).square().sum(-1) + 1e-12).sqrt()
+        same = pair_labels(labels, edges)
+        terms.append(torch.where(same, distance, F.relu(margin - distance)).square().mean())
+    return torch.stack(terms).sum()
+
+
+def edge_loss(logits, truth, positive_weight=1.):
     if not logits.numel():
         return logits.sum() * 0
-    terms = []
+    terms, weights = [], []
     if truth.any():
-        terms.append(F.softplus(-logits[truth]).mean())
+        terms.append(positive_weight * F.softplus(-logits[truth]).mean())
+        weights.append(positive_weight)
     if (~truth).any():
         terms.append(F.softplus(logits[~truth]).mean())
-    return torch.stack(terms).mean()
+        weights.append(1.)
+    return torch.stack(terms).sum() / sum(weights)
 
 
 @torch.no_grad()
@@ -148,18 +178,30 @@ def track_f1(summary):
     return 2 * m["n_matched_tracks"] / den if den else 0.
 
 
-def train_stage(model, name, events, validation, loss_fn, config, output, device, resume=False):
+def learning_rate_at_step(config, step):
+    if config.get("learning_rate_schedule", "constant") == "constant":
+        return config["learning_rate"]
+    warmup = config.get("warmup_steps", 0)
+    if step < warmup:
+        return config["learning_rate"] * (step + 1) / warmup
+    progress = (step - warmup) / max(config["steps_per_stage"] - warmup - 1, 1)
+    floor = config["min_learning_rate"]
+    return floor + .5 * (config["learning_rate"] - floor) * (1 + math.cos(math.pi * min(progress, 1.)))
+
+
+def train_stage(model, name, events, validation, loss_fn, config, output, device, resume=False, score_fn=None):
     model.to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=config["learning_rate"], weight_decay=config["weight_decay"])
     rng = np.random.default_rng(config["seed"])
     order = rng.permutation(len(events))
-    best, start = float("inf"), 0
+    best, best_score, start = float("inf"), -float("inf"), 0
     last_path, best_path = output / f"{name}_last.pt", output / f"{name}_best.pt"
     if resume and last_path.exists():
         state = torch.load(last_path, map_location=device, weights_only=False)
         model.load_state_dict(state["model"], strict=True)
         optimizer.load_state_dict(state["optimizer"])
         best, start, order = state["best"], state["step"], state["order"]
+        best_score = state.get("best_score", -float("inf"))
         rng.bit_generator.state = state["numpy_rng"]
         torch.set_rng_state(state["torch_rng"].cpu())
         if device.type == "cuda":
@@ -170,6 +212,8 @@ def train_stage(model, name, events, validation, loss_fn, config, output, device
         if step and step % len(events) == 0:
             order = rng.permutation(len(events))
         model.train()
+        for group in optimizer.param_groups:
+            group["lr"] = learning_rate_at_step(config, step)
         optimizer.zero_grad(set_to_none=True)
         loss = loss_fn(model, events[int(order[step % len(events)])])
         if not torch.isfinite(loss):
@@ -183,23 +227,33 @@ def train_stage(model, name, events, validation, loss_fn, config, output, device
                 "grad_norm": float(norm), "elapsed_seconds": round(time.monotonic() - started, 2)}), flush=True)
         if (step + 1) % config["validation_interval"] == 0 or step + 1 == config["steps_per_stage"]:
             model.eval()
-            with torch.no_grad():
+            cuda_devices = [device.index if device.index is not None else torch.cuda.current_device()] if device.type == "cuda" else []
+            # Random-pair validation must be repeatable and not perturb training RNG.
+            with torch.random.fork_rng(devices=cuda_devices), torch.no_grad():
+                torch.manual_seed(config["seed"] + 17)
                 val = float(np.mean([float(loss_fn(model, e)) for e in validation]))
+                score = float(score_fn(model, validation)) if score_fn else None
             if not np.isfinite(val):
                 raise ValueError(f"Nonfinite {name} validation loss")
-            improved = val < best
+            if score is not None and not np.isfinite(score):
+                raise ValueError(f"Nonfinite {name} selection score")
+            improved = score > best_score if score is not None else val < best
             best = min(best, val)
+            if score is not None:
+                best_score = max(best_score, score)
             payload = {"model": model.state_dict(), "optimizer": optimizer.state_dict(),
                 "step": step + 1, "best": best, "validation_loss": val, "stage": name,
                 "order": order, "numpy_rng": rng.bit_generator.state, "torch_rng": torch.get_rng_state(),
                 "cuda_rng": torch.cuda.get_rng_state_all() if device.type == "cuda" else [],
                 "config": config}
+            payload.update(best_score=best_score, selection_score=score)
             torch.save(payload, last_path.with_suffix(".tmp"))
             last_path.with_suffix(".tmp").replace(last_path)
             if improved:
                 shutil.copyfile(last_path, best_path)
             row = {"stage": name, "step": step + 1, "validation_loss": val, "best": best,
                 "improved": improved, "train_loss": float(np.mean(losses)), "elapsed_seconds": time.monotonic() - started}
+            row.update(selection_score=score, learning_rate=optimizer.param_groups[0]["lr"])
             with (output / "history.jsonl").open("a") as stream:
                 stream.write(json.dumps(row, allow_nan=False) + "\n")
             print(json.dumps(row), flush=True)
@@ -208,6 +262,7 @@ def train_stage(model, name, events, validation, loss_fn, config, output, device
     model.load_state_dict(state["model"], strict=True)
     model.eval()
     return {"stage": name, "selected_step": state["step"], "validation_loss": state["validation_loss"],
+            "selection_score": state.get("selection_score"),
             "checkpoint_sha256": file_sha256(best_path), "parameters": sum(p.numel() for p in model.parameters())}
 
 
@@ -248,17 +303,25 @@ def select_filter(model, events, graphs, config, device):
 
 
 @torch.no_grad()
-def graph_predictions(model, events, graphs, cut, config, device):
-    labels = []
+def graph_scores(model, events, graphs, device):
+    output = []
     for event, graph in zip(events, graphs, strict=True):
         graph = graph.to(device)
         bidir = torch.cat((graph, graph.flip(0)), dim=1)
         scores = model(torch.as_tensor(event.positions, device=device), bidir)[-1].sigmoid()
         # An undirected connection requires the mean of its two directed scores.
         probabilities = (scores[:graph.shape[1]] + scores[graph.shape[1]:]) * .5
-        accepted = graph[:, probabilities >= cut].cpu().numpy()
-        labels.append(components(len(event.raw_features), accepted, config["min_component_size"]))
-    return labels
+        output.append(probabilities.cpu())
+    return output
+
+
+def labels_from_scores(events, graphs, probabilities, cut, config):
+    return [components(len(event.raw_features), graph[:, score >= cut].numpy(), config["min_component_size"])
+            for event, graph, score in zip(events, graphs, probabilities, strict=True)]
+
+
+def graph_predictions(model, events, graphs, cut, config, device):
+    return labels_from_scores(events, graphs, graph_scores(model, events, graphs, device), cut, config)
 
 
 def run(args):
@@ -269,6 +332,8 @@ def run(args):
     config = json.loads(Path(args.config).read_text())
     if args.smoke:
         config.update(steps_per_stage=4, validation_interval=2, checkpoint_validation_events=4)
+        if "warmup_steps" in config:
+            config["warmup_steps"] = 1
         config["eggnet"].update(dbscan_eps=[.1, .5, 1.], dbscan_min_samples=[2])
         config["exatrkx"].update(gnn_cuts=[.3, .7])
     random.seed(config["seed"])
@@ -293,9 +358,10 @@ def run(args):
         "source_sha256": {str(p.relative_to(ROOT)): file_sha256(p) for p in source_files},
         "torch": torch.__version__, "cuda": torch.version.cuda, "device": str(device),
         "gpu": torch.cuda.get_device_name(device) if device.type == "cuda" else None,
-        "checkpoint_selection": "minimum event-mean validation objective on fixed validation subset",
+        "checkpoint_selection": "validation matched-track F1 for EggNet/GNN; stage loss for Exa.TrkX embedding/filter" if config.get("track_checkpoint_selection") else "minimum event-mean validation objective on fixed validation subset",
         "threshold_selection": "full validation matched-track global F1; stable grid order on ties",
-        "loss": "class-balanced all-pairs squared-distance hinge; stage edge BCE uses equal class means",
+        "loss": {"eggnet": config.get("eggnet_objective", "class_balanced_squared_hinge"),
+                 "exatrkx_embedding": "class_balanced_squared_hinge", "edges": "class-mean BCE with declared GNN positive weight"},
         "smoke": args.smoke, "tiny_event_eggnet": "repeat missing coordinate neighbors; preserve every point"}
     if args.resume:
         old = json.loads((output / "provenance.json").read_text())
@@ -309,15 +375,29 @@ def run(args):
         count = min(len(cohort.roles[role]), 16 if role == "train" else 8) if args.smoke else len(cohort.roles[role])
         role_events[role] = [cohort.event(role, i) for i in range(count)]
     train, val = role_events["train"], role_events["val"]
-    checkpoint_val = val[:config["checkpoint_validation_events"]]
+    if config.get("track_checkpoint_selection"):
+        checkpoint_indices = np.random.default_rng(config["seed"] + 1).choice(len(val), min(len(val), config["checkpoint_validation_events"]), replace=False).tolist()
+    else:
+        checkpoint_indices = list(range(min(len(val), config["checkpoint_validation_events"])))
+    checkpoint_val = [val[i] for i in checkpoint_indices]
+    write_json(output / "checkpoint_validation_indices.json", checkpoint_indices)
     print(json.dumps({"phase": "start", "method": args.method, "train": len(train), "val": len(val),
         "cohort_sha256": cohort.sha256, "tiny_train_events": sum(len(e.positions) < 3 for e in train), "device": str(device)}), flush=True)
     selected_stages = []
     model = eggnet(config["eggnet"]) if args.method == "eggnet" else exatrkx_embedding(config["exatrkx"]["embedding"])
     def embed_objective(m, event):
         z = embedding_output(m, event, args.method, device)
+        if args.method == "eggnet" and config.get("eggnet_objective") == "upstream_contrastive":
+            return eggnet_contrastive_loss(z, torch.as_tensor(event.labels["seg_target"], device=device),
+                config["margin"], config["max_pairs"], config["eggnet"]["knn_loss"], config["eggnet"]["random_pairs_per_node"])
         return embedding_loss(z, torch.as_tensor(event.labels["seg_target"], device=device), config["margin"], config["max_pairs"])
-    selected_stages.append(train_stage(model, "embedding", train, checkpoint_val, embed_objective, config, output, device, args.resume))
+    egg_score = None
+    if args.method == "eggnet" and config.get("track_checkpoint_selection"):
+        def egg_score(m, events):
+            ec = dict(config["eggnet"], dbscan_eps=config["eggnet"]["checkpoint_dbscan_eps"],
+                dbscan_min_samples=config["eggnet"]["checkpoint_dbscan_min_samples"])
+            return select_eggnet(m, events, ec, metrics, device)[0]["track_f1"]
+    selected_stages.append(train_stage(model, "embedding", train, checkpoint_val, embed_objective, config, output, device, args.resume, egg_score))
     if args.method == "eggnet":
         selection, trials = select_eggnet(model, val, config["eggnet"], metrics, device)
         write_json(output / "validation_selection.json", {"selected": selection, "trials": trials})
@@ -337,7 +417,8 @@ def run(args):
         write_json(output / "candidate_diagnostics.json", diagnostics)
         filt = exatrkx_filter(ec["filter"])
         train_items = list(zip(train, graphs["train"]))
-        val_items = list(zip(checkpoint_val, graphs["val"][:len(checkpoint_val)]))
+        checkpoint_graphs = [graphs["val"][i] for i in checkpoint_indices]
+        val_items = list(zip(checkpoint_val, checkpoint_graphs))
         def filter_objective(m, item):
             event, graph = item
             graph = graph.to(device)
@@ -356,12 +437,21 @@ def run(args):
             bidir = torch.cat((graph, graph.flip(0)), dim=1)
             logits = m(torch.as_tensor(event.positions, device=device), bidir)
             truth = pair_labels(torch.as_tensor(event.labels["seg_target"], device=device), bidir)
-            return torch.stack([edge_loss(output_logits, truth) for output_logits in logits]).mean()
+            return torch.stack([edge_loss(output_logits, truth, ec.get("gnn_positive_weight", 1.)) for output_logits in logits]).mean()
+        checkpoint_graphs = [graphs["val"][i] for i in checkpoint_indices]
+        gnn_score = None
+        if config.get("track_checkpoint_selection"):
+            def gnn_score(m, items):
+                events, gs = map(list, zip(*items))
+                scores = graph_scores(m, events, gs, device)
+                return max(track_f1(evaluate(events, labels_from_scores(events, gs, scores, threshold, ec), metrics))
+                           for threshold in ec["checkpoint_gnn_cuts"])
         selected_stages.append(train_stage(gnn, "gnn", list(zip(train, graphs["train"])),
-            list(zip(checkpoint_val, graphs["val"][:len(checkpoint_val)])), gnn_objective, config, output, device, args.resume))
+            list(zip(checkpoint_val, checkpoint_graphs)), gnn_objective, config, output, device, args.resume, gnn_score))
         trials = []
+        val_scores = graph_scores(gnn, val, graphs["val"], device)
         for threshold in ec["gnn_cuts"]:
-            result = evaluate(val, graph_predictions(gnn, val, graphs["val"], threshold, ec, device), metrics)
+            result = evaluate(val, labels_from_scores(val, graphs["val"], val_scores, threshold, ec), metrics)
             trials.append({"gnn_cut": threshold, "track_f1": track_f1(result), **result})
         selection = max(trials, key=lambda row: row["track_f1"])
         write_json(output / "validation_selection.json", {"selected": selection, "trials": trials})

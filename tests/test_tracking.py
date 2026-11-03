@@ -9,10 +9,11 @@ import torch
 
 from clas12_benchmarks.interaction_network import SegmentClassifier
 from clas12_benchmarks.tracking import (HitBatch, components, edge_loss, embedding_loss,
-                                        pair_labels, train_stage)
+                                        pair_labels, train_stage, eggnet_contrastive_loss, learning_rate_at_step)
 from clas12_benchmarks.upstream import (ROOT, eggnet, exatrkx_embedding, exatrkx_filter,
                                        neighbor_edges, scatter_add, softmax)
 from clas12_benchmarks.prepare_cohort import prepare
+from clas12_benchmarks.upstream import definition
 
 
 class TrackingTests(unittest.TestCase):
@@ -51,6 +52,42 @@ class TrackingTests(unittest.TestCase):
         self.assertEqual(float(embedding_loss(singleton, labels[:1])), 0.)
         with self.assertRaisesRegex(ValueError, "limit"):
             embedding_loss(z, labels, max_pairs=2)
+
+    def test_corrected_eggnet_loss_matches_actual_upstream_values_and_gradients(self):
+        get_distances = definition("vendor/eggnet/eggnet/loss/utils/utils.py", "get_distances", {})
+        upstream_loss = definition("vendor/eggnet/eggnet/loss/utils/utils.py", "hinge_loss", {"get_distances": get_distances})
+        z = torch.tensor([[0., .1], [.2, .3], [.6, -.1], [.1, .2]], requires_grad=True)
+        labels = torch.tensor([0, 0, 1, -1])
+        torch.manual_seed(23)
+        actual = eggnet_contrastive_loss(z, labels, k=2, random_pairs_per_node=5)
+        actual_gradient = torch.autograd.grad(actual, z, retain_graph=True)[0]
+        pairs = torch.triu_indices(4, 4, offset=1)
+        signal = pairs[:, pair_labels(labels, pairs)]
+        hard = neighbor_edges(z, 2)
+        torch.manual_seed(23)
+        random = torch.randint(4, (2, 20))
+        random = random[:, random[0] != random[1]]
+        batch = SimpleNamespace(hit_embedding=z)
+        expected = sum(upstream_loss(batch, edges, 1., y=pair_labels(labels, edges).float() * 2 - 1,
+                                    w=torch.ones(edges.shape[1])) for edges in (signal, hard, random))
+        torch.testing.assert_close(actual, expected)
+        torch.testing.assert_close(actual_gradient, torch.autograd.grad(expected, z)[0])
+
+    def test_corrected_repulsion_remains_strong_near_collapse(self):
+        z = torch.tensor([[0.], [.0001]], requires_grad=True)
+        labels = torch.tensor([0, 1])
+        torch.manual_seed(4)
+        loss = eggnet_contrastive_loss(z, labels)
+        grad = torch.autograd.grad(loss, z)[0]
+        self.assertGreater(float(grad.abs().max()), 1.)
+        self.assertGreater(float(grad[0]), 0.)
+
+    def test_warmup_cosine_endpoints(self):
+        c = dict(self.config, learning_rate_schedule="warmup_cosine", warmup_steps=10,
+                 min_learning_rate=.00001, steps_per_stage=100)
+        self.assertAlmostEqual(learning_rate_at_step(c, 0), c["learning_rate"] / 10)
+        self.assertAlmostEqual(learning_rate_at_step(c, 9), c["learning_rate"])
+        self.assertAlmostEqual(learning_rate_at_step(c, 99), c["min_learning_rate"])
 
     def test_architectures_update_and_strict_reload(self):
         torch.manual_seed(11)
@@ -133,6 +170,28 @@ class TrackingTests(unittest.TestCase):
             for name, value in a.state_dict().items():
                 torch.testing.assert_close(value, b.state_dict()[name], rtol=0, atol=0)
 
+    def test_scheduled_checkpoint_resume_and_score_selection(self):
+        events = [torch.tensor([[i, 1.]], dtype=torch.float32) for i in range(1, 4)]
+        config = dict(self.config, steps_per_stage=5, validation_interval=1,
+                      learning_rate_schedule="warmup_cosine", warmup_steps=2, min_learning_rate=.00001)
+        def objective(m, event):
+            return m(event).square().mean()
+        torch.manual_seed(12)
+        a, b = torch.nn.Linear(2, 1), torch.nn.Linear(2, 1)
+        b.load_state_dict(a.state_dict())
+        with tempfile.TemporaryDirectory() as da, tempfile.TemporaryDirectory() as db:
+            train_stage(a, "test", events, events, objective, config, Path(da), torch.device("cpu"))
+            train_stage(b, "test", events, events, objective, dict(config, steps_per_stage=2), Path(db), torch.device("cpu"))
+            train_stage(b, "test", events, events, objective, config, Path(db), torch.device("cpu"), resume=True)
+            for name, value in a.state_dict().items():
+                torch.testing.assert_close(value, b.state_dict()[name], rtol=0, atol=0)
+        with tempfile.TemporaryDirectory() as directory:
+            selected = train_stage(a, "score", events, events, objective, config, Path(directory), torch.device("cpu"),
+                score_fn=lambda model, data: float(objective(model, data[0])))
+            # Deliberately maximize this monotonically decreasing objective to
+            # check that the callback, rather than minimum loss, selects step 1.
+            self.assertEqual(selected["selected_step"], 1)
+
     def test_real_cohort_preparation_contract_on_native_fixture(self):
         from mmap_ninja import RaggedMmap
         with tempfile.TemporaryDirectory() as directory:
@@ -152,6 +211,15 @@ class TrackingTests(unittest.TestCase):
             self.assertEqual(summary["roles"]["train"]["n_events"], 4)
             self.assertEqual(len(cohort.roles["test"]), 3)
             self.assertEqual(cohort.event("val", 0).labels["coatjava_seg_pred"].tolist(), [0, 0, -1])
+            expanded = prepare(root, Path(directory) / "expanded", train=4, val=3, test=5, seed=7, extend_from=output)
+            def identities(c, role):
+                return {(c.event(role, i).identity["source_file"], c.event(role, i).identity["event"])
+                        for i in range(len(c.roles[role]))}
+            self.assertEqual(identities(cohort, "train"), identities(expanded, "train"))
+            self.assertTrue(identities(cohort, "val") <= identities(expanded, "val"))
+            self.assertFalse(identities(cohort, "test") & identities(expanded, "test"))
+            self.assertEqual(next(iter(cohort.datasets.values()))[0]["radius_scale"],
+                             next(iter(expanded.datasets.values()))[0]["radius_scale"])
 
 
 if __name__ == "__main__":

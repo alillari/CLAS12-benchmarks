@@ -1,0 +1,128 @@
+{
+  "schema": "clas12_mild_tuning_v2",
+  "seed": 1337,
+  "steps_per_stage": 40000,
+  "validation_interval": 2000,
+  "checkpoint_validation_events": 512,
+  "learning_rate": 0.0001,
+  "weight_decay": 0.0001,
+  "grad_clip": 1.0,
+  "margin": 1.0,
+  "max_pairs": 2000000,
+  "eggnet": {
+    "node_features": [
+      "hit_f0",
+      "hit_f1",
+      "hit_f2",
+      "hit_f3",
+      "hit_f4",
+      "hit_f5",
+      "hit_f6",
+      "hit_f7",
+      "hit_f8",
+      "hit_f9",
+      "hit_f10",
+      "hit_f11"
+    ],
+    "encoder_hidden": 64,
+    "node_0_hidden": 64,
+    "node_hidden": 64,
+    "edge_hidden": 64,
+    "decoder_hidden": 64,
+    "node_rep_dim": 64,
+    "edge_rep_dim": 64,
+    "node_pspace_dim": 24,
+    "n_encoder_layers": 3,
+    "n_node_0_layers": 3,
+    "n_edge_layers": 3,
+    "n_node_layers": 3,
+    "n_decoder_layers": 1,
+    "hidden_activation": "SiLU",
+    "output_activation": "Tanh",
+    "layernorm": true,
+    "batchnorm": false,
+    "embedding_norm": true,
+    "n_iters": 3,
+    "n_gnns_per_iter": 2,
+    "recurrent": true,
+    "recurrent_gnn": false,
+    "knn_train": 6,
+    "checkpoint": false,
+    "dbscan_eps": [
+      0.05,
+      0.1,
+      0.15,
+      0.2,
+      0.3,
+      0.4,
+      0.5,
+      0.65,
+      0.8,
+      1.0
+    ],
+    "dbscan_min_samples": [
+      3,
+      4
+    ],
+    "knn_loss": 10,
+    "random_pairs_per_node": 10,
+    "checkpoint_dbscan_eps": [
+      0.1,
+      0.2,
+      0.3,
+      0.5
+    ],
+    "checkpoint_dbscan_min_samples": [
+      4
+    ]
+  },
+  "exatrkx": {
+    "embedding": {
+      "in_channels": 4,
+      "emb_hidden": 512,
+      "nb_layer": 6,
+      "emb_dim": 8
+    },
+    "filter": {
+      "in_channels": 4,
+      "emb_channels": 0,
+      "hidden": 512,
+      "nb_layer": 3,
+      "layernorm": true,
+      "batchnorm": false
+    },
+    "gnn_processing_steps": 6,
+    "candidate_k": 32,
+    "candidate_radius": 2.0,
+    "filter_cuts": [
+      0.05,
+      0.1,
+      0.2,
+      0.3,
+      0.5,
+      0.675
+    ],
+    "filter_min_edge_recall": 0.99,
+    "gnn_cuts": [
+      0.3,
+      0.4,
+      0.5,
+      0.6,
+      0.7,
+      0.8,
+      0.9
+    ],
+    "min_component_size": 2,
+    "gnn_positive_weight": 1.25,
+    "checkpoint_gnn_cuts": [
+      0.5,
+      0.7,
+      0.8
+    ]
+  },
+  "warmup_steps": 1000,
+  "min_learning_rate": 1e-05,
+  "learning_rate_schedule": "warmup_cosine",
+  "eggnet_objective": "upstream_contrastive",
+  "track_checkpoint_selection": true
+}

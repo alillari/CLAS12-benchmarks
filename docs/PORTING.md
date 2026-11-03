@@ -1,5 +1,10 @@
 # Porting status and decisions
 
+The sections below record the initial import boundary. The subsequent
+[tracking integration](TRACKING.md) adds EggNet training, all three
+Exa.TrkX stages, a verified Torch Interaction Network port, and direct shared
+CLAS12 metric evaluation. The upstream trees remain unchanged.
+
 ## Provenance
 
 The initial source audit inspected the complete public FM4NPP repository tree at
@@ -26,11 +31,10 @@ those of its two distinct nearest neighbors in four-coordinate space. For exact
 distance ties, SciPy's neighbor choice is used; no cross-library tie equivalence
 is claimed. The exporter preserves event and point order and refuses overwrite.
 
-Remaining work: finalize architecture flags not specified in the FM4NPP paper,
-choose and validate positive/negative pair sampling and loss reductions, integrate
-CLAS12 validation metrics and DBSCAN inference, test the upstream GPU runtime and
-strict checkpoint/resume behavior, then run a real-data smoke. Upstream defaults
-must not be represented as the missing FM4NPP settings.
+The standalone runner provides pair-loss training, validation-only DBSCAN
+calibration and native CLAS12 evaluation. Architecture and optimization choices
+are explicit recipes; settings not specified by FM4NPP remain our choices.
+See the tracking guide for objective selection and runtime checks.
 
 ## Exa.TrkX
 
@@ -41,11 +45,13 @@ revision or framework the FM4NPP authors used. FM4NPP's all-same-track edge labe
 differ from immediate-neighbor truth in upstream preprocessing. Coordinate
 conversion alone is insufficient to call this adapted.
 
-Remaining work: replace TrackML feature/truth preparation, reconcile removal of
-cell features, implement all-same-track supervision and validate each learned
-stage. Recalibrate thresholds using validation only; the paper's TPC values are
-reference values, not approved CLAS12 cuts. Validate graph-to-track clustering
-without truth-assisted relabeling and test the full pipeline in an isolated runtime.
+The standalone runner replaces TrackML features with four CLAS12 coordinates
+and uses all-same-track supervision. It trains embedding, filtering and a
+Torch port of the TF/Sonnet Interaction Network, then extracts connected
+components. The filter operates on coordinate pairs without TrackML cell
+features. Cuts are calibrated using validation only. The upstream Torch
+ResAGNN is unused; the port-parity tool compares the implemented network
+with the original TF/Sonnet model.
 
 ## Semantic graph networks
 
@@ -85,6 +91,8 @@ explicit CLAS12 geometry decision. Track finding or momentum heads are extension
 The manifest freezes source-file/event identities across all roles. Targets never
 enter geometry neighbor construction. Prediction exports reject missing or duplicate
 point identities and restore source order. Unknown/invalid values are failures,
-not reasons to reduce the evaluation population. Connecting this interchange to
-the existing CLAS12 evaluator is separate pending work; neither current metric
-equivalence nor agreement with published scores has been established.
+not reasons to reduce the evaluation population. The tracking runner snapshots
+the shared CLAS12 evaluator and measures model
+and stored COATJAVA labels on the same points. The original CLAS12 evaluation
+CLI still needs an interchange reader. Published scores require matching
+population and metric definitions before comparison.

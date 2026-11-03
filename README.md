@@ -6,19 +6,20 @@ it does not import its Mamba models, trainers, or checkpoint code.
 
 ## Initial port
 
-| Method | What is here | Current validation |
-|---|---|---|
-| EggNet | Original upstream source/history; CLAS12 full-event PyG exporter | Export round trip on native-format synthetic RaggedMmap events |
-| Exa.TrkX | Original publication pipeline source/history | Source integrity verified; CLAS12 pipeline adaptation pending |
-| GATConv, GCNConv, GraphConv, SAGEConv | Our paper-based reconstruction using PyTorch Geometric | CPU forward/backward, parameter update, strict checkpoint reload |
-| OneFormer3D | Original source/history including S3DIS configuration | Source integrity verified; CLAS12 semantic-only adaptation pending |
+| Method | Included support |
+|---|---|
+| EggNet | Upstream source, CLAS12 exporter, training and DBSCAN evaluation |
+| Exa.TrkX | Upstream embedding/filter forwards and Torch Interaction Network port |
+| GATConv, GCNConv, GraphConv, SAGEConv | Paper-based semantic graph reconstruction using PyTorch Geometric |
+| OneFormer3D | Upstream source and S3DIS configuration; CLAS12 adaptation pending |
 
 The FM4NPP authors' external-baseline adaptations were not present in the public
 `FM4NPP/PP_collision` tree inspected at
 `863cb28ad798d4753569737563a754cb2a0e6284`, nor in the locally supplied downstream
 archive. These are upstream source imports plus our new integration, **not a
-recovered copy of the authors' private benchmark code**. No benchmark convergence,
-GPU execution, or reproduction of the published scores is claimed.
+recovered copy of the authors' private benchmark code**. See [tracking
+usage](docs/TRACKING.md) for cohort preparation, training, shared CLAS12 evaluation and
+prediction auditing.
 
 `sources.lock.json` pins imported upstream revisions. Imports use Git subtrees
 without squashing, retaining original commits and licenses. The upstream revision
@@ -47,8 +48,9 @@ python -m unittest discover -s tests -v
 The `graphs` extra is sufficient for our graph classifiers and EggNet data export.
 It does not install the three upstream applications. Each has its own dependencies;
 use separate environments for those. Original requirement files are preserved in
-`vendor/`. The initial CPU checks used PyTorch 2.5.1 and PyG 2.4.0. They do not test
-EggNet's GPU neighbor search or Exa.TrkX/OneFormer3D runtimes.
+`vendor/`. The standalone tracking runner uses the `tracking` extra and native
+Torch graph operations; it runs without those full application environments.
+The tracking usage guide describes the optional TensorFlow/Sonnet port-parity check.
 
 ## Use CLAS12 data
 
@@ -66,15 +68,17 @@ clas12-benchmarks export-eggnet /absolute/path/cohort.json \
 ```
 
 The reader accepts native `features_<split>`, `seg_target_<split>`, optional
-`pid_target_<split>`/`noise_target_<split>`, `metadata.json`, and
+`pid_target_<split>`/`noise_target_<split>`/`coatjava_seg_pred_<split>`, `metadata.json`, and
 `samples_<split>.jsonl`. It requires complete event samples and checks all selected
 point-target alignments. It never silently skips events or truncates their points.
 Indices refer to original dataset rows, independently of manifest role names.
 
 The EggNet export uses its upstream `hit_*` feature convention and writes an
 `export.json` recording identities, normalization, node-feature names and cohort
-fingerprint. These files satisfy the model input convention; an adapted EggNet
-training configuration/loss/validation path is still required before training.
+fingerprint. These files satisfy the model input convention and preserve truth
+for downstream training/evaluation.
+The standalone runner documented in [tracking usage](docs/TRACKING.md)
+now supplies a training and evaluation path independently of these exports.
 Exports contain truth for supervised training and evaluation: only the twelve
 named coordinate features may be passed to model inference.
 
@@ -92,14 +96,17 @@ mapping and ignored-label policy must be set in a task-specific training runner.
 ## Experiment boundary
 
 Keep datasets, prepared graphs, checkpoints, predictions, logs and plots outside
-this repository, normally in sibling `result_deep_storage/benchmarks`. Commit source,
-recipes, tests and provenance. A completed run must additionally record this repo's
+this repository, normally in sibling `result_deep_storage/benchmarks`. Commit reusable source,
+recipes and tests. Keep run-specific provenance and result reports with the
+external artifacts. A completed run must additionally record this repo's
 commit and dirty patch, the source lock, complete environment, data identity,
 cohort fingerprint, seed, selection rule and checkpoint hash.
 
 `predictions.save_predictions` checks a complete one-to-one point mapping and
 restores original order. Its versioned output is a new interchange format; the
-CLAS12 shared evaluator still needs a reader for it. Do not compare upstream native
+standalone tracking runner evaluates predictions through the shared CLAS12 metric
+module before saving them. The original CLAS12 evaluation CLI still needs a reader
+for saved interchange files. Do not compare upstream native
 scores directly to CLAS12 scores: matching, background and cohort definitions must
 be shared. The canonical data identity uses source filename plus event number;
 datasets must use consistent original event numbering and source-file naming.

@@ -75,7 +75,7 @@ class Cohort:
                 raise ValueError(f"Invalid event index in dataset {name}")
             arrays = {}
             for field in ["features", "seg_target", *spec.get("extra_targets", [])]:
-                if field in arrays or field not in {"features", "seg_target", "pid_target", "noise_target"}:
+                if field in arrays or field not in {"features", "seg_target", "pid_target", "noise_target", "coatjava_seg_pred"}:
                     raise ValueError(f"Duplicate or unsupported target: {field}")
                 location = root / f"{field}_{split}"
                 # RaggedMmap's constructor creates missing directories; check first.

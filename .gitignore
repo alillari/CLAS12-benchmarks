@@ -12,4 +12,18 @@ data/
 *.pyg
 *.npz
 *.npy
+# Generated experiment artifacts stay outside version control.
+/results/
+/runs/
+/plots/
+/docs/runs/
+*.pth
+*.log
+# Generated experiment artifacts stay outside version control.
+/results/
+/runs/
+/plots/
+/docs/runs/
+*.pth
+*.log
 !vendor/**

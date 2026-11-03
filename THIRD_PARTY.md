@@ -12,6 +12,11 @@ without local modifications. Our wrappers and paper-based graph reconstruction
 live outside the imported trees. There is no blanket license grant for third-party
 code. In particular, OneFormer3D's upstream noncommercial terms remain applicable.
 
+`src/clas12_benchmarks/interaction_network.py` is a PyTorch derivative of the
+Apache-2.0 Exa.TrkX `exatrkx/src/tfgraphs/model.py`; its original source and license
+remain in `vendor/exatrkx`. The standalone runtime executes named definitions
+from the original EggNet and Exa.TrkX sources without changing those files.
+
 Method references and bibliography are available in each upstream README and the
 [FM4NPP paper](https://arxiv.org/abs/2508.14087). Use method-specific citations when
 reporting benchmark results. This repository is an independent CLAS12 adaptation,

@@ -1,0 +1,33 @@
+{
+  "schema": "clas12_first_tracking_runs_v1",
+  "seed": 1337,
+  "steps_per_stage": 20000,
+  "validation_interval": 1000,
+  "checkpoint_validation_events": 256,
+  "learning_rate": 0.0003,
+  "weight_decay": 0.0001,
+  "grad_clip": 1.0,
+  "margin": 1.0,
+  "max_pairs": 2000000,
+  "eggnet": {
+    "node_features": ["hit_f0", "hit_f1", "hit_f2", "hit_f3", "hit_f4", "hit_f5", "hit_f6", "hit_f7", "hit_f8", "hit_f9", "hit_f10", "hit_f11"],
+    "encoder_hidden": 64, "node_0_hidden": 64, "node_hidden": 64, "edge_hidden": 64, "decoder_hidden": 64,
+    "node_rep_dim": 64, "edge_rep_dim": 64, "node_pspace_dim": 24,
+    "n_encoder_layers": 3, "n_node_0_layers": 3, "n_edge_layers": 3, "n_node_layers": 3, "n_decoder_layers": 3,
+    "hidden_activation": "SiLU", "output_activation": "Tanh", "layernorm": true, "batchnorm": false,
+    "embedding_norm": true, "n_iters": 4, "n_gnns_per_iter": 4, "recurrent": true, "recurrent_gnn": false,
+    "knn_train": 10, "checkpoint": false,
+    "dbscan_eps": [0.05, 0.1, 0.2, 0.3, 0.5, 0.75, 1.0], "dbscan_min_samples": [2, 3, 4]
+  },
+  "exatrkx": {
+    "embedding": {"in_channels": 4, "emb_hidden": 512, "nb_layer": 6, "emb_dim": 8},
+    "filter": {"in_channels": 4, "emb_channels": 0, "hidden": 512, "nb_layer": 3, "layernorm": true, "batchnorm": false},
+    "gnn_processing_steps": 8,
+    "candidate_k": 100,
+    "candidate_radius": 2.0,
+    "filter_cuts": [0.05, 0.1, 0.2, 0.3, 0.5, 0.675],
+    "filter_min_edge_recall": 0.98,
+    "gnn_cuts": [0.1, 0.3, 0.5, 0.7, 0.8, 0.9, 0.95],
+    "min_component_size": 2
+  }
+}

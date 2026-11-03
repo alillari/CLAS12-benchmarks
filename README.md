@@ -20,6 +20,7 @@ archive. These are upstream source imports plus our new integration, **not a
 recovered copy of the authors' private benchmark code**. See [tracking
 usage](docs/TRACKING.md) for cohort preparation, training, shared CLAS12 evaluation and
 prediction auditing. Frozen comparisons and corrected-loss recipes are also supported.
+Nested label sweeps include metric intervals and learning-curve plotting.
 
 `sources.lock.json` pins imported upstream revisions. Imports use Git subtrees
 without squashing, retaining original commits and licenses. The upstream revision

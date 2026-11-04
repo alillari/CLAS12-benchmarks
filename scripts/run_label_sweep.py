@@ -57,7 +57,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--method", choices=("eggnet", "exatrkx"), required=True)
     p.add_argument("--cohorts", default="/cohorts")
-    p.add_argument("--config", default="/workspace/configs/label_budget_sweep_20261103.json")
+    p.add_argument("--config", default=str(Path(__file__).resolve().parents[1] / "configs/label_budget_sweep.json"))
     p.add_argument("--metrics", default="/clas12-metrics/track_finding_metrics.py")
     p.add_argument("--device", default="cuda")
     p.add_argument("--output", default="/results")

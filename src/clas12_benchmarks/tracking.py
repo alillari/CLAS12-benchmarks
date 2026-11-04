@@ -34,6 +34,22 @@ class HitBatch(SimpleNamespace):
         return getattr(self, key)
 
 
+def validate_recipe(config):
+    """Resolve new-run defaults explicitly; reject silent objective fallbacks."""
+    objective = config.setdefault("eggnet_objective", "upstream_contrastive")
+    if objective not in {"upstream_contrastive", "class_balanced_squared_hinge"}:
+        raise ValueError(f"Unknown EggNet objective: {objective}")
+    if objective == "upstream_contrastive":
+        missing = {"knn_loss", "random_pairs_per_node"} - config["eggnet"].keys()
+        if missing:
+            raise ValueError(f"Corrected EggNet objective requires explicit sampling parameters: {sorted(missing)}")
+    orientation = config["exatrkx"].setdefault("edge_orientation", "geometry")
+    if orientation not in {"geometry", "legacy_index"}:
+        raise ValueError(f"Unknown Exa.TrkX edge orientation: {orientation}")
+    if config["exatrkx"]["filter"].get("emb_channels", 0) != 0:
+        raise ValueError("The CLAS12 runner supports coordinate-only filters (emb_channels=0)")
+
+
 def egg_features(event):
     if len(event.positions) >= 3:
         return eggnet_features(event)
@@ -123,7 +139,23 @@ def candidates(model, event, config, device):
     edges = neighbor_edges(z, config["candidate_k"], config["candidate_radius"])
     # Treat either directed proposal as an undirected candidate, without truth.
     edges = torch.sort(edges, dim=0).values
-    return torch.unique(edges, dim=1).cpu()
+    edges = torch.unique(edges, dim=1).cpu()
+    # Old checkpoint provenance did not name an orientation. Retain its exact
+    # behavior here; validate_recipe explicitly resolves geometry for new runs.
+    orientation = config.get("edge_orientation", "legacy_index")
+    if orientation == "legacy_index":
+        return edges
+    if orientation != "geometry":
+        raise ValueError(f"Unknown Exa.TrkX edge orientation: {orientation}")
+    # The filter concatenates endpoints asymmetrically. Choose their order from
+    # observed geometry, never arbitrary row indices. Radius follows the upstream
+    # outward convention; xyz breaks equal-radius ties without using truth.
+    xyz = event.raw_features[:, -3:]
+    order = np.lexsort((xyz[:, 2], xyz[:, 1], xyz[:, 0], np.linalg.norm(xyz, axis=1)))
+    rank = np.empty(len(order), dtype=np.int64)
+    rank[order] = np.arange(len(order))
+    flip = torch.from_numpy(rank[edges[0]] > rank[edges[1]])
+    return torch.where(flip.unsqueeze(0), edges.flip(0), edges)
 
 
 def components(n, edges, min_size=2):
@@ -331,6 +363,7 @@ def run(args):
     if (output / "provenance.json").exists() and not args.resume:
         raise FileExistsError("Existing run: use a fresh output or explicit --resume")
     config = json.loads(Path(args.config).read_text())
+    validate_recipe(config)
     if args.smoke:
         config.update(steps_per_stage=4, validation_interval=2, checkpoint_validation_events=4)
         if "warmup_steps" in config:
@@ -360,7 +393,7 @@ def run(args):
         "torch": torch.__version__, "cuda": torch.version.cuda, "device": str(device),
         "gpu": torch.cuda.get_device_name(device) if device.type == "cuda" else None,
         "checkpoint_selection": "validation matched-track F1 for EggNet/GNN; stage loss for Exa.TrkX embedding/filter" if config.get("track_checkpoint_selection") else "minimum event-mean validation objective on fixed validation subset",
-        "threshold_selection": "full validation matched-track global F1; stable grid order on ties",
+        "threshold_selection": "full validation matched-track global F1 for clustering/GNN; filter precision subject to candidate-edge recall",
         "loss": {"eggnet": config.get("eggnet_objective", "class_balanced_squared_hinge"),
                  "exatrkx_embedding": "class_balanced_squared_hinge", "edges": "class-mean BCE with declared GNN positive weight"},
         "smoke": args.smoke, "tiny_event_eggnet": "repeat missing coordinate neighbors; preserve every point"}
@@ -480,7 +513,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--method", choices=("eggnet", "exatrkx"), required=True)
     parser.add_argument("--cohort", required=True)
-    parser.add_argument("--config", default=str(ROOT / "configs/first_real_runs.json"))
+    parser.add_argument("--config", default=str(ROOT / "configs/tracking.json"))
     parser.add_argument("--metrics", required=True, help="CLAS12 train/downstream/track_finding_metrics.py")
     parser.add_argument("--output", required=True)
     parser.add_argument("--device", default="cuda")

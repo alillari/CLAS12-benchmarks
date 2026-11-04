@@ -21,7 +21,7 @@ def main():
     parser.add_argument("--output", required=True)
     parser.add_argument("--metrics", required=True)
     parser.add_argument("--device", default="cpu")
-    parser.add_argument("--config", default=str(ROOT / "configs/first_real_runs.json"))
+    parser.add_argument("--config", default=str(ROOT / "configs/tracking.json"))
     args = parser.parse_args()
     output = Path(args.output)
     root = output / "fixture"

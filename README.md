@@ -1,8 +1,10 @@
 # CLAS12 external neural benchmarks
 
-Independent source and CLAS12 adaptations for the neural baselines compared in
-FM4NPP. This repository is separate from the CLAS12 foundation-model repository;
-it does not import its Mamba models, trainers, or checkpoint code.
+Independent source and CLAS12 adaptations for external neural benchmarks. The
+initial tracking and semantic ports follow the FM4NPP comparisons. The
+[momentum implementation plan](docs/MOMENTUM_PLAN.md) covers the Miller track
+fitter and the Jahin CMS trigger GNN. This repository is separate from the
+CLAS12 foundation-model repository and does not import its models, trainers or checkpoint code.
 
 ## Initial port
 

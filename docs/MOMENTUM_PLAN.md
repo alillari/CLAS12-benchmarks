@@ -2,7 +2,7 @@
 
 **Proposed first comparison.** Given the clusters of one truth-associated CVT track, predict its momentum at the innermost matched MC hit. Train a Miller-style committee of scalar regressors and a Jahin-style EdgeConv graph regressor from scratch. Score both against the existing Cartesian momentum models and the stored CVT entrance estimate on the same track identities. Also run a scalar transverse-momentum comparison so the effect of extending the CMS model to three components is measurable.
 
-This is an implementation plan. The source review covered the two v2 papers, the CMS authors' code and data archive, the CLAS12 evaluator, the v6_02 product metadata, and the saved momentum cohort keys.
+The [track manifest and evaluator](MOMENTUM.md) implement the first milestone below. The model sections remain proposals. The source review covered the two v2 papers, the CMS authors' code and data archive, the CLAS12 evaluator, the v6_02 product metadata, and the saved momentum cohort keys.
 
 ## 1. What can be recovered from the sources
 

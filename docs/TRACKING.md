@@ -31,7 +31,69 @@ across roles. Source files can overlap across roles: this is an event holdout.
 Normalization is fitted on training coordinates only. Preparation writes a cohort
 manifest, original identities, copied arrays and a population summary externally.
 
-## Train and evaluate
+The legacy preparation command above remains unchanged. Native HDF5 preparation
+uses the following explicit reader selection.
+
+## Native cluster HDF5
+
+Install the `hdf5` extra in addition to the tracking dependencies. Prepare a
+frozen cohort on a machine where the complete product is mounted:
+
+```bash
+python -m pip install -e '.[tracking,graphs,hdf5,plotting]'
+python -m clas12_benchmarks.prepare_cohort /absolute/path/cvt_cluster_hdf5_20261103_002 \
+  "$RUN_ROOT/cohort" --reader hdf5 --train 10000 --val 1000 --test 2000 --seed 1337
+clas12-benchmarks inspect "$RUN_ROOT/cohort/cohort.json"
+```
+
+Training, validation and evaluation come from the published `train`,
+`validation` and `test` splits respectively. No shard payload is copied. The
+v2 cohort records metadata/geometry fingerprints, selected-content hashes,
+explicit source rows, training-only normalization, and feature/label policies.
+Use the existing tracking commands below with its `cohort.json`.
+
+Inputs remain position-only: first-pass cluster xyz in cm is transformed to the
+same normalized eta, cosine/sine phi, and radius features. Every cluster is
+retained in original order; -1 remains background. `clusters.reco_segment`
+supplies the stored COATJAVA grouping. PID maps absolute PDG values to
+pion/kaon/proton/electron/other, with -100 for invalid PID. Raw signed PDG,
+native noise and validity fields remain available through the source reader.
+`Event.masks` preserves supervised validity.
+
+The default noise policy is `primary_unassigned_is_noise_v1`, matching the
+foundation-model adapter's treatment of all unassigned clusters as noise,
+including contested ownership. Use `--noise-policy primary_valid_only_v1` to
+instead supervise only valid native noise labels; invalid entries then use -100
+with a false mask. These are different declared label policies.
+
+Physical HDF5 event identity is `(source_manifest_id, source_id,
+original_ordinal)`. Native run/event numbers are separate diagnostics. V2
+prediction files and audits use this identity; old v1 prediction files retain
+their existing source-file/event keys. Training and frozen evaluation verify
+consumed source content, including for resume. HDF5 events and derived graphs
+use bounded caches; `event_cache_size` in the training JSON controls event
+caching (default eight). Existing graph/pair limits fail explicitly and never
+truncate a large event.
+
+Legacy manifests with external array roots also fingerprint their selected
+payloads for resume and audit. Archived materialized legacy cohorts retain their
+existing fingerprint convention. HDF5 extension/sweep preparation accepts a
+relocated copy only when the parent's selected bytes still agree.
+
+`--extend-from` preserves training and old validation membership and draws fresh
+test events excluding the parent's test set. The existing label-sweep module
+also accepts HDF5 parents and writes nested reference cohorts:
+
+```bash
+python -m clas12_benchmarks.prepare_label_sweep /absolute/path/cvt_cluster_hdf5_20261103_002 \
+  "$RUN_ROOT/cohort" "$RUN_ROOT/sweep"
+```
+
+The default sweep requires its anchor of 10,000 training events; use the Python
+`prepare(..., budgets=...)` API for custom budget lists. Use a new output directory
+for each preparation. A failed preparation does not publish a completed cohort.
+
+## Train and evaluate a frozen cohort
 
 ```bash
 python -m clas12_benchmarks.tracking --method eggnet \
@@ -216,6 +278,26 @@ original features. Signal ARI and global track purity/efficiency use the frozen
 shared evaluator. Per-event and per-track diagnostics remain with external results.
 CPU replay may differ slightly from saved GPU inference; a full validation run
 records those differences and the original candidate counts explicitly.
+## FM4NPP architecture and 300-epoch control
+
+For an old-data architecture and training-duration control, use
+`configs/eggnet_fm4npp_100k_300epochs.json` with `--method eggnet` and the
+unchanged 100,000-training-event cohort. Its 30,000,000 updates process one event
+each, giving exactly 300 passes through that cohort. The recipe restores the
+FM4NPP Appendix C architecture: four graph iterations, four message-passing
+rounds per iteration, ten graph neighbors, 64-wide MLPs with two hidden layers
+(including the decoder), and a 24-dimensional output embedding. See the
+[paper](https://arxiv.org/html/2508.14087v1) for the published architecture.
+
+This control preserves the corrected EggNet objective, seed, optimizer,
+validation subset and interval, checkpoint-selection rule and clustering grids
+from the historical label sweep. The cosine schedule spans the longer update
+budget. It retains CLAS12 coordinates and normalization; it does not reproduce
+sPHENIX data preprocessing or substitute the paper's fixed DBSCAN parameters.
+The filename's 100k refers to labeled events, not tracks. A different training
+cohort size changes the number of passes, so verify its population before launch.
+Use fresh external outputs; retain the last checkpoint for explicit resume and
+keep results and comparisons outside Git.
 
 ## Check upstream mathematical compatibility
 

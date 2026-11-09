@@ -1,0 +1,136 @@
+{
+  "checkpoint_validation_events": 512,
+  "eggnet": {
+    "batchnorm": false,
+    "checkpoint": false,
+    "checkpoint_dbscan_eps": [
+      0.1,
+      0.2,
+      0.3,
+      0.5
+    ],
+    "checkpoint_dbscan_min_samples": [
+      4
+    ],
+    "dbscan_eps": [
+      0.05,
+      0.1,
+      0.15,
+      0.2,
+      0.3,
+      0.4,
+      0.5,
+      0.65,
+      0.8,
+      1
+    ],
+    "dbscan_min_samples": [
+      3,
+      4
+    ],
+    "decoder_hidden": 64,
+    "edge_hidden": 64,
+    "edge_rep_dim": 64,
+    "embedding_norm": true,
+    "encoder_hidden": 64,
+    "hidden_activation": "SiLU",
+    "knn_loss": 10,
+    "knn_train": 10,
+    "layernorm": true,
+    "n_decoder_layers": 3,
+    "n_edge_layers": 3,
+    "n_encoder_layers": 3,
+    "n_gnns_per_iter": 4,
+    "n_iters": 4,
+    "n_node_0_layers": 3,
+    "n_node_layers": 3,
+    "node_0_hidden": 64,
+    "node_features": [
+      "hit_f0",
+      "hit_f1",
+      "hit_f2",
+      "hit_f3",
+      "hit_f4",
+      "hit_f5",
+      "hit_f6",
+      "hit_f7",
+      "hit_f8",
+      "hit_f9",
+      "hit_f10",
+      "hit_f11"
+    ],
+    "node_hidden": 64,
+    "node_pspace_dim": 24,
+    "node_rep_dim": 64,
+    "output_activation": "Tanh",
+    "random_pairs_per_node": 10,
+    "recurrent": true,
+    "recurrent_gnn": false
+  },
+  "eggnet_objective": "upstream_contrastive",
+  "exatrkx": {
+    "candidate_k": 32,
+    "candidate_radius": 2,
+    "checkpoint_gnn_cuts": [
+      0.5,
+      0.7,
+      0.8
+    ],
+    "embedding": {
+      "emb_dim": 8,
+      "emb_hidden": 512,
+      "in_channels": 4,
+      "nb_layer": 6
+    },
+    "filter": {
+      "batchnorm": false,
+      "emb_channels": 0,
+      "hidden": 512,
+      "in_channels": 4,
+      "layernorm": true,
+      "nb_layer": 3
+    },
+    "filter_cuts": [
+      0.05,
+      0.1,
+      0.2,
+      0.3,
+      0.5,
+      0.675
+    ],
+    "filter_min_edge_recall": 0.99,
+    "gnn_cuts": [
+      0.3,
+      0.4,
+      0.5,
+      0.6,
+      0.7,
+      0.8,
+      0.9
+    ],
+    "gnn_positive_weight": 1.25,
+    "gnn_processing_steps": 6,
+    "min_component_size": 2,
+    "edge_orientation": "legacy_index"
+  },
+  "grad_clip": 1,
+  "learning_rate": 0.0001,
+  "learning_rate_schedule": "warmup_cosine",
+  "margin": 1,
+  "max_pairs": 2000000,
+  "min_learning_rate": 0.00001,
+  "schema": "clas12_tracking_recipe_v2",
+  "seed": 1337,
+  "steps_per_stage": 30000000,
+  "track_checkpoint_selection": true,
+  "validation_interval": 5000,
+  "validation_steps": [
+    100,
+    250,
+    500,
+    1000,
+    2000
+  ],
+  "warmup_steps": 1000,
+  "weight_decay": 0.0001
+}

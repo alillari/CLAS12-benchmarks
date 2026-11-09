@@ -10,11 +10,16 @@ from mmap_ninja import RaggedMmap
 
 from .data import Cohort, file_sha256
 from .prepare_cohort import draw_excluding, write_json
+from .sources import open_ragged
 
 
 def prepare(root, previous, output, budgets=(100, 1000, 10000, 100000), seed=1337):
     root, previous, output = map(Path, (root, previous, output))
     parent = Cohort(previous / "cohort.json")
+    if parent.is_hdf5:
+        parent.close()
+        from .hdf5_cohort import prepare_sweep
+        return prepare_sweep(root, previous, output, budgets, seed)
     pm = json.loads((previous / "metadata.json").read_text())
     budgets = sorted(budgets)
     anchor = len(parent.roles["train"])
@@ -26,7 +31,7 @@ def prepare(root, previous, output, budgets=(100, 1000, 10000, 100000), seed=133
         return [pm["source_splits"][parent.datasets[m["dataset"]][0]["source_split"]]["indices"][m["index"]]
                 for m in parent.roles[role]]
     old_train, val = original_indices("train"), original_indices("val")
-    arrays = {name: RaggedMmap(root / f"{name}_pretrain", mode="r")
+    arrays = {name: open_ragged(root, name, "pretrain")
               for name in ("features", "seg_target", "coatjava_seg_pred")}
     rng = np.random.default_rng(seed)
     extra = draw_excluding(rng, len(arrays["features"]), max(budgets) - anchor, old_train + val)

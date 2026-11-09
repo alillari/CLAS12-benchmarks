@@ -14,7 +14,7 @@ from .data import Cohort, file_sha256
 from .interaction_network import SegmentClassifier
 from .prepare_cohort import write_json
 from .tracking import (candidates, components, filter_probabilities, graph_scores,
-                       metric_module, pair_labels)
+                       metric_module)
 from .upstream import ROOT, exatrkx_embedding, exatrkx_filter, neighbor_edges
 
 
@@ -55,8 +55,9 @@ def graph_diagnostics(truth, edges, min_size=2):
         singleton_tracks += size == 1
         track_rows.append({"truth_id": int(label), "hits": int(size),
                            "components": len(counts), "largest_component_hits": largest})
-    component_sizes = np.bincount(cc)
-    oracle = np.where(component_sizes[cc] >= min_size, cc, -1)
+    # Keep production's empty-graph policy even when min_size=1. The singleton
+    # labels above are only for measuring connectivity, not reconstruction.
+    oracle = components(len(truth), edges[:, true_edge], min_size=min_size)
     oracle[truth < 0] = -1
     return {"true_pairs": pairs, "edges": edges.shape[1],
             "true_edges": int(true_edge.sum()), "tracks": len(ids),
@@ -118,6 +119,21 @@ def validate_selected_stages(selected):
         raise ValueError("Requires exactly one selected embedding, filter and GNN checkpoint")
 
 
+def validate_frozen_sources(provenance, *, hdf5=False):
+    """Verify model forwards, graph construction and the active input reader."""
+    paths = ["vendor/exatrkx/exatrkx/src/embedding/layerless_embedding.py",
+             "vendor/exatrkx/exatrkx/src/filter/vanilla_filter.py",
+             "src/clas12_benchmarks/interaction_network.py",
+             "src/clas12_benchmarks/upstream.py", "src/clas12_benchmarks/tracking.py",
+             "src/clas12_benchmarks/data.py", "src/clas12_benchmarks/graphs.py",
+             "src/clas12_benchmarks/sequences.py",
+             "src/clas12_benchmarks/hdf5.py" if hdf5 else "src/clas12_benchmarks/sources.py"]
+    saved = provenance["source_sha256"]
+    for path in paths:
+        if file_sha256(ROOT / path) != saved.get(path):
+            raise ValueError(f"Frozen model/input source changed or missing: {path}")
+
+
 def analyze(args):
     output, parent = Path(args.output), Path(args.run)
     output.mkdir(parents=True, exist_ok=True)
@@ -126,20 +142,16 @@ def analyze(args):
     provenance = json.loads((parent / "provenance.json").read_text())
     if provenance["method"] != "exatrkx":
         raise ValueError("Requires an Exa.TrkX run")
-    cohort = Cohort(args.cohort)
+    with Cohort(args.cohort) as cohort:
+        return _analyze_cohort(args, output, parent, provenance, cohort)
+
+
+def _analyze_cohort(args, output, parent, provenance, cohort):
     if cohort.sha256 != provenance["cohort_sha256"]:
         raise ValueError("Parent cohort fingerprint mismatch")
-    data_root = Path(args.cohort).resolve().parent
-    hashes = {str(p.relative_to(data_root)): file_sha256(p)
-              for directory in sorted(data_root.iterdir()) if directory.is_dir()
-              for p in sorted(directory.rglob("*")) if p.is_file()}
-    if hashes != provenance["data_array_sha256"]:
+    if cohort.data_fingerprints() != provenance["data_array_sha256"]:
         raise ValueError("Prepared data fingerprints changed")
-    for path in ("vendor/exatrkx/exatrkx/src/embedding/layerless_embedding.py",
-                 "vendor/exatrkx/exatrkx/src/filter/vanilla_filter.py",
-                 "src/clas12_benchmarks/interaction_network.py", "src/clas12_benchmarks/upstream.py"):
-        if file_sha256(ROOT / path) != provenance["source_sha256"][path]:
-            raise ValueError(f"Frozen model source changed: {path}")
+    validate_frozen_sources(provenance, hdf5=cohort.is_hdf5)
     metrics = metric_module(parent / "track_finding_metrics.py", output)
     if file_sha256(output / "track_finding_metrics.py") != provenance["metric_sha256"]:
         raise ValueError("Evaluator fingerprint mismatch")
@@ -261,7 +273,10 @@ def analyze(args):
     if args.split == "val" and count == len(cohort.roles["val"]):
         frozen = json.loads((parent / "frozen_selection.json").read_text())
         keys = ("ari_signal", "track_purity_global", "track_efficiency_global")
-        summary["replay_minus_saved_validation"] = {k: summary["actual_gnn"][k] - frozen["metrics"][k] for k in keys}
+        summary["replay_minus_saved_validation"] = {
+            k: summary["actual_gnn"][k] - frozen["metrics"][k]
+            if summary["actual_gnn"][k] is not None and frozen["metrics"][k] is not None else None
+            for k in keys}
         recorded = json.loads((parent / "candidate_diagnostics.json").read_text())["val"]
         summary["recorded_candidate_diagnostics"] = recorded
         if stage_summary["candidate"]["graph"]["true_pairs"] != recorded["true_pairs"]:

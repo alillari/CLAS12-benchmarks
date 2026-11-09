@@ -15,8 +15,12 @@ def save_predictions(path, event, predictions, point_indices, *, method, cohort_
         raise ValueError("Missing, nonfinite, or misaligned predictions")
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    metadata = {"schema": "clas12_baseline_predictions_v1", "method": method,
+    metadata = {"schema": prediction_schema(event.identity), "method": method,
                 "cohort_sha256": cohort_sha256, "identity": event.identity}
     with path.open("xb") as stream:
         np.savez_compressed(stream, predictions=predictions[np.argsort(point_indices)],
                             original_point_index=np.arange(n), metadata=json.dumps(metadata))
+
+
+def prediction_schema(identity):
+    return "clas12_baseline_predictions_v2" if "source_manifest_id" in identity else "clas12_baseline_predictions_v1"

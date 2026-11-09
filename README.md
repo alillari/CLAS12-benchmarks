@@ -1,8 +1,15 @@
 # CLAS12 external neural benchmarks
 
-Independent source and CLAS12 adaptations for the neural baselines compared in
-FM4NPP. This repository is separate from the CLAS12 foundation-model repository;
-it does not import its Mamba models, trainers, or checkpoint code.
+Independent source and CLAS12 adaptations for external neural benchmarks. The
+initial tracking and semantic ports follow the FM4NPP comparisons. The
+[momentum guide](docs/MOMENTUM.md) covers the shared track manifest and evaluator.
+The [implementation plan](docs/MOMENTUM_PLAN.md) describes the Miller track
+fitter and the Jahin CMS trigger GNN. The [HDF5 support plan](docs/DATA_FORMAT_PLAN.md)
+describes native cluster access while preserving legacy data workflows.
+The [testing plan](docs/TESTING_PLAN.md) defines regression checks and acceptance
+gates for existing workflows and the HDF5 implementation.
+This repository is separate from the
+CLAS12 foundation-model repository and does not import its models, trainers or checkpoint code.
 
 ## Initial port
 
@@ -41,7 +48,7 @@ from executable CLAS12 settings. See [porting details](docs/PORTING.md).
 Use a dedicated environment with a suitable PyTorch installation:
 
 ```bash
-python -m pip install -e '.[graphs]'
+python -m pip install -e '.[graphs,tracking,plotting,hdf5]'
 python scripts/verify_sources.py
 python -m unittest discover -s tests -v
 ```
@@ -54,6 +61,15 @@ Torch graph operations; it runs without those full application environments.
 The tracking usage guide describes the optional TensorFlow/Sonnet port-parity check.
 
 ## Use CLAS12 data
+
+Native cluster HDF5 (`cvt-clusters-h5-v1`) and legacy RaggedMmap are supported.
+Use `--reader hdf5` when preparing the new product; the default reader preserves
+the old workflow. See the [HDF5 workflow](docs/TRACKING.md#native-cluster-hdf5)
+and [HDF5 momentum packing](docs/MOMENTUM.md#cluster-hdf5-momentum).
+HDF5 cohorts reference read-only shards and fingerprint selected content; they
+do not require a RaggedMmap conversion. The `hdf5` extra is optional for legacy
+loading and scoring. Tracking/upstream exports use the complete source checkout
+and the documented editable installation, including `vendor/` and `configs/`.
 
 Start with `configs/cohort.example.json`. Replace the dataset path, normalization
 constants, fingerprints, and explicit event lists with those from the actual

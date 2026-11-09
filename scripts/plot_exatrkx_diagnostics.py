@@ -70,16 +70,18 @@ def main():
     ax = axes[1, 1]
     stages = ("candidate", "after_filter", "after_gnn")
     labels = ("Candidates", "After filter", "After GNN cut")
-    full = [summary["stages"][s]["graph"]["fully_connected_track_fraction"] for s in stages]
-    half = [summary["stages"][s]["graph"]["at_least_half_connected_track_fraction"] for s in stages]
+    full = np.array([summary["stages"][s]["graph"]["fully_connected_track_fraction"] for s in stages], dtype=float)
+    half = np.array([summary["stages"][s]["graph"]["at_least_half_connected_track_fraction"] for s in stages], dtype=float)
     positions = np.arange(3)
     ax.bar(positions - .18, full, .36, label="All track hits connected", color=green)
     ax.bar(positions + .18, half, .36, label="At least half connected", color=blue)
     ax.set(xticks=positions, xticklabels=labels, ylabel="Fraction of true tracks", title="Connectivity through the pipeline", ylim=(0, 1.09))
     ax.yaxis.set_major_formatter(PercentFormatter(1))
     for i in range(3):
-        ax.text(i - .18, full[i] + .012, f"{100*full[i]:.1f}%", ha="center", fontsize=8)
-        ax.text(i + .18, half[i] + .012, f"{100*half[i]:.1f}%", ha="center", fontsize=8)
+        for offset, values in ((-.18, full), (.18, half)):
+            value = values[i]
+            ax.text(i + offset, value + .012 if np.isfinite(value) else .012,
+                    f"{100*value:.1f}%" if np.isfinite(value) else "n/a", ha="center", fontsize=8)
     ax.legend(fontsize=8, loc="lower left")
     n_tracks = summary["stages"]["candidate"]["graph"]["tracks"]
     fig.suptitle(f"Frozen Exa.TrkX graph diagnostics · {summary['events']:,} {summary['split']} events · {n_tracks:,} true tracks", fontsize=13)
@@ -90,14 +92,15 @@ def main():
     columns = (("ari_signal", "Signal ARI"), ("track_purity_global", "Track purity"), ("track_efficiency_global", "Track efficiency"))
     labels = ("Candidate\noracle", "After-filter\noracle", "After-GNN\noracle", "Actual GNN\nreconstruction")
     for ax, (key, title) in zip(axes, columns):
-        values = [summary["stages"][s]["oracle"][key] for s in stages] + [summary["actual_gnn"][key]]
+        values = np.array([summary["stages"][s]["oracle"][key] for s in stages] + [summary["actual_gnn"][key]], dtype=float)
         ax.bar(np.arange(4), values, color=[blue, green, orange, "#ac4b4b"])
-        ax.set(xticks=np.arange(4), xticklabels=labels, title=title, ylim=(0, 1.1))
+        ax.set(xticks=np.arange(4), xticklabels=labels, title=title, ylim=(-1 if key == "ari_signal" else 0, 1.1))
         ax.tick_params(axis="x", labelsize=8)
         if key != "ari_signal":
             ax.yaxis.set_major_formatter(PercentFormatter(1))
         for i, value in enumerate(values):
-            ax.text(i, value + .015, f"{value:.3f}" if key == "ari_signal" else f"{100*value:.1f}%", ha="center", fontsize=9)
+            label = (f"{value:.3f}" if key == "ari_signal" else f"{100*value:.1f}%") if np.isfinite(value) else "n/a"
+            ax.text(i, value + .015 if np.isfinite(value) else .015, label, ha="center", fontsize=9)
     fig.suptitle("Perfect-edge-label connected-component oracles versus actual reconstruction", fontsize=12)
     for suffix in ("png", "svg"):
         fig.savefig(output / f"oracle_reconstruction.{suffix}", dpi=180)

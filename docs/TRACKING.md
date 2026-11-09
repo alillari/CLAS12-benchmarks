@@ -261,6 +261,13 @@ sources and evaluator. It uses every event in the requested role by default;
 `--max-events` provides a bounded smoke check. No checkpoint or cut is retrained
 or recalibrated. Use a fresh external output directory. Plotting needs Matplotlib.
 
+Data verification uses the trainer's cohort fingerprint contract for materialized
+legacy arrays, externally referenced legacy arrays and native cluster HDF5.
+Inference and active reader sources must match the saved run; use its matching
+source snapshot when inspecting older checkpoints. Missing source hashes are
+rejected. Undefined metrics (for example, purity with no reconstructed tracks)
+and their replay differences remain JSON `null`; plots label them `n/a`.
+
 Outputs include same-track and different-track Euclidean embedding-distance
 distributions, true-pair candidate recall versus radius at fixed saved k, and
 recall versus k at the saved radius. Both scans also report the fraction of

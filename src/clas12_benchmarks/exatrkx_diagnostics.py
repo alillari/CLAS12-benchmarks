@@ -112,6 +112,12 @@ def distribution(values):
                     "fraction": probabilities.tolist()}}
 
 
+def validate_selected_stages(selected):
+    names = [row["stage"] for row in selected]
+    if len(names) != 3 or set(names) != {"embedding", "filter", "gnn"}:
+        raise ValueError("Requires exactly one selected embedding, filter and GNN checkpoint")
+
+
 def analyze(args):
     output, parent = Path(args.output), Path(args.run)
     output.mkdir(parents=True, exist_ok=True)
@@ -139,6 +145,7 @@ def analyze(args):
         raise ValueError("Evaluator fingerprint mismatch")
     config = provenance["config"]["exatrkx"]
     selected = json.loads((parent / "selected_checkpoints.json").read_text())
+    validate_selected_stages(selected)
     torch.set_num_threads(args.threads)
     device = torch.device(args.device)
     models = {"embedding": exatrkx_embedding(config["embedding"]),

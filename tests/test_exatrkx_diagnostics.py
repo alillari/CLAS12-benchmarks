@@ -4,10 +4,18 @@ import numpy as np
 import torch
 
 from clas12_benchmarks.exatrkx_diagnostics import (aggregate_graphs, graph_diagnostics,
-                                                  mst_radius, undirected_candidates)
+                                                  mst_radius, undirected_candidates,
+                                                  validate_selected_stages)
 
 
 class ExatrkxDiagnosticTests(unittest.TestCase):
+    def test_missing_or_duplicate_checkpoints_are_rejected(self):
+        selected = [{"stage": name} for name in ("embedding", "filter", "gnn")]
+        validate_selected_stages(selected)
+        for invalid in (selected[:-1], selected + selected[:1], selected[:2] + selected[:1]):
+            with self.assertRaises(ValueError):
+                validate_selected_stages(invalid)
+
     def test_other_track_and_background_cannot_bridge_a_true_track(self):
         truth = np.array([0, 0, 1, 1, -1])
         # Both track-1 points reach track-0, but no true track-1 edge exists.

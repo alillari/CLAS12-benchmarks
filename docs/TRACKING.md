@@ -185,6 +185,27 @@ conditional bootstrap bands and stored COATJAVA reference values. Install
 Matplotlib separately for plotting. Keep plots and their input summaries with the
 external run artifacts.
 
+## FM4NPP architecture and 300-epoch control
+
+For an old-data architecture and training-duration control, use
+`configs/eggnet_fm4npp_100k_300epochs.json` with `--method eggnet` and the
+unchanged 100,000-training-event cohort. Its 30,000,000 updates process one event
+each, giving exactly 300 passes through that cohort. The recipe restores the
+FM4NPP Appendix C architecture: four graph iterations, four message-passing
+rounds per iteration, ten graph neighbors, 64-wide MLPs with two hidden layers
+(including the decoder), and a 24-dimensional output embedding. See the
+[paper](https://arxiv.org/html/2508.14087v1) for the published architecture.
+
+This control preserves the corrected EggNet objective, seed, optimizer,
+validation subset and interval, checkpoint-selection rule and clustering grids
+from the historical label sweep. The cosine schedule spans the longer update
+budget. It retains CLAS12 coordinates and normalization; it does not reproduce
+sPHENIX data preprocessing or substitute the paper's fixed DBSCAN parameters.
+The filename's 100k refers to labeled events, not tracks. A different training
+cohort size changes the number of passes, so verify its population before launch.
+Use fresh external outputs; retain the last checkpoint for explicit resume and
+keep results and comparisons outside Git.
+
 ## Check upstream mathematical compatibility
 
 ```bash

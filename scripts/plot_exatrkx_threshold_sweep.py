@@ -52,7 +52,8 @@ def main():
         ax.axvline(saved, color="0.35", linestyle=":", label=f"Saved cut {saved:g}")
         if best != saved:
             ax.axvline(best, color="0.35", linestyle="--", label=f"Best validation F1 cut {best:g}")
-        ax.set(xlabel="GNN probability cut (retain score ≥ cut)", xlim=(0, 1), ylim=(0, 1.025))
+        ax.set(xlabel="GNN probability cut (retain score ≥ cut)", xlim=(0, 1),
+               ylim=(-1 if ax is axes[0, 1] else 0, 1.025))
         ax.grid(alpha=.15)
         ax.legend(fontsize=8, loc="best")
     fig.suptitle(f"Frozen Exa.TrkX · {summary['events']:,} validation events · only the GNN cut varies", fontsize=13)

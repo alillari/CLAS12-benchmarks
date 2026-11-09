@@ -7,11 +7,12 @@ import numpy as np
 import torch
 
 from .data import Cohort, file_sha256
-from .exatrkx_diagnostics import aggregate_graphs, graph_diagnostics, ratio, validate_selected_stages
+from .exatrkx_diagnostics import (aggregate_graphs, graph_diagnostics, ratio,
+                                  validate_frozen_sources, validate_selected_stages)
 from .interaction_network import SegmentClassifier
 from .prepare_cohort import write_json
 from .tracking import candidates, components, filter_probabilities, graph_scores, metric_module
-from .upstream import ROOT, exatrkx_embedding, exatrkx_filter
+from .upstream import exatrkx_embedding, exatrkx_filter
 
 
 def strict_track_states(truth, prediction, track_rows):
@@ -85,19 +86,16 @@ def sweep(args):
     old = json.loads((parent / "provenance.json").read_text())
     if old["method"] != "exatrkx":
         raise ValueError("Requires an Exa.TrkX run")
-    cohort = Cohort(args.cohort)
+    with Cohort(args.cohort) as cohort:
+        return _sweep_cohort(args, parent, output, old, cohort)
+
+
+def _sweep_cohort(args, parent, output, old, cohort):
     if cohort.sha256 != old["cohort_sha256"]:
         raise ValueError("Parent cohort fingerprint mismatch")
-    data_root = Path(args.cohort).resolve().parent
-    hashes = {str(p.relative_to(data_root)): file_sha256(p) for directory in sorted(data_root.iterdir()) if directory.is_dir()
-              for p in sorted(directory.rglob("*")) if p.is_file()}
-    if hashes != old["data_array_sha256"]:
+    if cohort.data_fingerprints() != old["data_array_sha256"]:
         raise ValueError("Prepared data fingerprints changed")
-    for path in ("vendor/exatrkx/exatrkx/src/embedding/layerless_embedding.py", "vendor/exatrkx/exatrkx/src/filter/vanilla_filter.py",
-                 "src/clas12_benchmarks/upstream.py", "src/clas12_benchmarks/interaction_network.py",
-                 "src/clas12_benchmarks/tracking.py", "src/clas12_benchmarks/data.py", "src/clas12_benchmarks/graphs.py"):
-        if file_sha256(ROOT / path) != old["source_sha256"][path]:
-            raise ValueError(f"Frozen model source changed: {path}")
+    validate_frozen_sources(old, hdf5=cohort.is_hdf5)
     metrics = metric_module(parent / "track_finding_metrics.py", output)
     if file_sha256(output / "track_finding_metrics.py") != old["metric_sha256"]:
         raise ValueError("Evaluator fingerprint mismatch")

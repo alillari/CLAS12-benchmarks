@@ -322,6 +322,10 @@ survives when `score >= cut`. The saved cut is always included. Override the
 default scan with `--cuts`, or use `--max-events` for a smoke check. No parent
 checkpoint or selection file is changed. Use a fresh external output directory.
 
+The sweep uses the same cohort fingerprints and inference/reader source checks
+as the diagnostic above, including native HDF5 and externally referenced legacy
+arrays. Undefined metrics remain `null` and appear as gaps in the threshold plots.
+
 Reported F1 is `2 * pooled matched tracks / (pooled truth + predicted tracks)`;
 purity and efficiency use those same pooled counts. Signal ARI and merge rate
 are event means from the frozen evaluator. Full connectivity requires all hits

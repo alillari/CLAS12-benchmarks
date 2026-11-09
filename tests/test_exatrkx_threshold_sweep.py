@@ -1,4 +1,12 @@
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
+import json
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+from unittest.mock import patch
 
 import numpy as np
 
@@ -6,6 +14,80 @@ from clas12_benchmarks.exatrkx_diagnostics import graph_diagnostics
 from clas12_benchmarks.exatrkx_threshold_sweep import (paired_delta_bootstrap, recovery_counts,
                                                       strict_track_states)
 from clas12_benchmarks.tracking import components
+from clas12_benchmarks import exatrkx_threshold_sweep
+from exatrkx_fixture import frozen_run
+
+
+class SweepIntegrationTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+
+    def run_cli(self, args):
+        argv = ["sweep", "--run", args.run, "--cohort", args.cohort, "--output", args.output,
+                "--device", "cpu", "--threads", "2", "--cuts", "0", "1", "--bootstrap", "8"]
+        with patch("sys.argv", argv), redirect_stdout(StringIO()):
+            exatrkx_threshold_sweep.main()
+        return json.loads((Path(args.output) / "summary.json").read_text())
+
+    def test_cli_accepts_all_storage_fingerprints_and_preserves_scores(self):
+        for backend in ("materialized", "external", "hdf5"):
+            with self.subTest(backend=backend):
+                args = frozen_run(self.root / backend, backend)
+                report = self.run_cli(args)
+                saved = json.loads((Path(args.run) / "frozen_selection.json").read_text())
+                self.assertEqual(report["baseline"]["metrics"], saved["metrics"])
+                self.assertEqual(report["events"], 1)
+                curve = json.loads((Path(args.output) / "threshold_curve.json").read_text())
+                self.assertEqual([row["cut"] for row in curve], [0., .3, 1.])
+                self.assertEqual(curve[0]["graph"]["edges"], 10)
+                self.assertEqual(curve[-1]["graph"]["edges"], 0)
+                self.assertIsNone(curve[-1]["metrics"]["track_purity_global"])
+                with np.load(Path(args.output) / "edge_scores.npz") as cache:
+                    np.testing.assert_array_equal(cache["scores"], np.full(10, .5))
+                    np.testing.assert_array_equal(cache["event_offsets"], [0, 10])
+                    np.testing.assert_array_equal(cache["event_point_counts"], [5])
+
+    def test_cli_rejects_changed_external_payload(self):
+        from mmap_ninja import RaggedMmap
+        args = frozen_run(self.root / "external", "external")
+        array = RaggedMmap(self.root / "external/raw/features_pretrain", mode="r+")
+        array[1][:] *= 2
+        with self.assertRaisesRegex(ValueError, "Prepared data fingerprints changed"):
+            self.run_cli(args)
+
+    def test_cli_rejects_changed_hdf5_payload(self):
+        import h5py
+        args = frozen_run(self.root / "hdf5", "hdf5")
+        for path in (self.root / "hdf5/raw/validation").glob("*.h5"):
+            with h5py.File(path, "r+") as source:
+                source["clusters/xyz"][:] *= 2
+        with self.assertRaisesRegex(ValueError, "content drift"):
+            self.run_cli(args)
+
+    def test_cli_checks_shared_inference_and_reader_sources_before_loading(self):
+        for backend, source in (("materialized", "tracking.py"), ("hdf5", "hdf5.py")):
+            with self.subTest(backend=backend):
+                args = frozen_run(self.root / backend, backend)
+                path = Path(args.run) / "provenance.json"
+                provenance = json.loads(path.read_text())
+                provenance["source_sha256"]["src/clas12_benchmarks/" + source] = "0" * 64
+                path.write_text(json.dumps(provenance))
+                with patch.object(exatrkx_threshold_sweep, "exatrkx_embedding", side_effect=AssertionError("Must reject before model loading")):
+                    with self.assertRaisesRegex(ValueError, "source changed or missing.*" + source):
+                        self.run_cli(args)
+                self.assertFalse((Path(args.output) / "provenance.json").exists())
+
+    def test_no_predictions_at_saved_cut_still_produces_summary_and_plot(self):
+        args = frozen_run(self.root / "empty", cut=1.)
+        report = self.run_cli(args)
+        self.assertEqual(report["baseline"]["metrics"]["n_pred_tracks"], 0)
+        self.assertIsNone(report["baseline"]["metrics"]["track_purity_global"])
+        script = Path(__file__).resolve().parents[1] / "scripts/plot_exatrkx_threshold_sweep.py"
+        subprocess.run([sys.executable, str(script), "--input", args.output], check=True, capture_output=True, text=True)
+        for suffix in ("png", "svg"):
+            self.assertGreater((Path(args.output) / f"gnn_threshold_sweep.{suffix}").stat().st_size, 0)
 
 
 class ThresholdSweepTests(unittest.TestCase):

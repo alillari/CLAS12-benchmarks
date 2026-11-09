@@ -247,6 +247,44 @@ conditional bootstrap bands and stored COATJAVA reference values. Install
 Matplotlib separately for plotting. Keep plots and their input summaries with the
 external run artifacts.
 
+## Diagnose frozen Exa.TrkX graph construction
+
+```bash
+python -m clas12_benchmarks.exatrkx_diagnostics --run "$RUN_ROOT/exatrkx" \
+  --cohort "$RUN_ROOT/cohort/cohort.json" --split val --device cpu \
+  --output "$RUN_ROOT/exatrkx_diagnostics"
+python scripts/plot_exatrkx_diagnostics.py --input "$RUN_ROOT/exatrkx_diagnostics"
+```
+
+The diagnostic verifies the saved cohort, data arrays, checkpoint hashes, model
+sources and evaluator. It uses every event in the requested role by default;
+`--max-events` provides a bounded smoke check. No checkpoint or cut is retrained
+or recalibrated. Use a fresh external output directory. Plotting needs Matplotlib.
+
+Data verification uses the trainer's cohort fingerprint contract for materialized
+legacy arrays, externally referenced legacy arrays and native cluster HDF5.
+Inference and active reader sources must match the saved run; use its matching
+source snapshot when inspecting older checkpoints. Missing source hashes are
+rejected. Undefined metrics (for example, purity with no reconstructed tracks)
+and their replay differences remain JSON `null`; plots label them `n/a`.
+
+Outputs include same-track and different-track Euclidean embedding-distance
+distributions, true-pair candidate recall versus radius at fixed saved k, and
+recall versus k at the saved radius. Both scans also report the fraction of
+true tracks fully connected. Track connectivity uses only true edges within
+that track, excluding paths through other tracks or noise. Pair recall is pooled
+over unordered true pairs; connectivity is pooled over truth tracks. Distance
+distributions are pair-weighted; track spans and MST connection radii give one
+entry per track. The k-neighbor proposals are symmetrized by union as in training.
+
+The candidate, filtered and GNN-selected graphs each receive a perfect-edge-label
+oracle: remove all false/background edges, then take connected components with
+the saved minimum component size. This measures that particular graph-constrained
+reconstruction; it is not a bound on every possible reconstruction from the
+original features. Signal ARI and global track purity/efficiency use the frozen
+shared evaluator. Per-event and per-track diagnostics remain with external results.
+CPU replay may differ slightly from saved GPU inference; a full validation run
+records those differences and the original candidate counts explicitly.
 ## FM4NPP architecture and 300-epoch control
 
 For an old-data architecture and training-duration control, use

@@ -36,7 +36,7 @@ manifest, original identities, copied arrays and a population summary externally
 ```bash
 python -m clas12_benchmarks.tracking --method eggnet \
   --cohort "$RUN_ROOT/cohort/cohort.json" \
-  --config configs/mild_tuning_20261103.json \
+  --config configs/tracking.json \
   --metrics /absolute/path/CLAS12/train/downstream/track_finding_metrics.py \
   --output "$RUN_ROOT/eggnet"
 ```
@@ -100,11 +100,17 @@ documented in the script; they are not required for Torch training.
 
 ## Corrected-loss recipe and frozen comparisons
 
-`configs/mild_tuning_20261103.json` enables the upstream EggNet Euclidean
+`configs/tracking.json` enables the upstream EggNet Euclidean
 squared-hinge objective, warmup/cosine learning rate, and tracking-score checkpoint
 selection for EggNet/GNN. The compatibility recipe `configs/first_real_runs.json`
 retains the earlier class-balanced pair objective. These are explicit choices;
-check the objective and selection rule when comparing runs.
+check the objective and selection rule when comparing runs. The dated recipes
+explicitly retain `legacy_index` edge direction for compatibility. New-run
+defaults use `geometry`: order filter endpoints by 3D distance from the coordinate origin, then xyz
+for ties, independently of point row order. Saved configurations without an
+orientation retain legacy direction during frozen inference. Retrain with the new
+recipe before interpreting any performance difference; changing the direction of
+inputs to an existing asymmetric filter changes its predictions.
 
 Expand a prepared cohort while preserving training members/order and normalization:
 
@@ -122,7 +128,7 @@ python scripts/run_tuned_comparison.py --method eggnet \
   --cohort "$RUN_ROOT/expanded/cohort.json" \
   --original-cohort /absolute/path/previous/cohort/cohort.json \
   --parent /absolute/path/previous/eggnet \
-  --config configs/mild_tuning_20261103.json \
+  --config configs/tracking.json \
   --metrics /absolute/path/CLAS12/train/downstream/track_finding_metrics.py \
   --output "$RUN_ROOT/comparison"
 ```
@@ -144,7 +150,7 @@ python -m clas12_benchmarks.prepare_label_sweep /absolute/path/native_data \
   /absolute/path/previous/cohort "$RUN_ROOT/sweep_cohorts" --seed 1337
 python scripts/run_label_sweep.py --method eggnet \
   --cohorts "$RUN_ROOT/sweep_cohorts" \
-  --config configs/label_budget_sweep_20261103.json \
+  --config configs/label_budget_sweep.json \
   --metrics /absolute/path/CLAS12/train/downstream/track_finding_metrics.py \
   --output "$RUN_ROOT/eggnet_sweep"
 ```
@@ -178,3 +184,29 @@ The plot shows signal ARI, global track purity and global track efficiency,
 conditional bootstrap bands and stored COATJAVA reference values. Install
 Matplotlib separately for plotting. Keep plots and their input summaries with the
 external run artifacts.
+
+## Check upstream mathematical compatibility
+
+```bash
+python scripts/verify_sources.py
+python scripts/check_tracking_upstream.py --device cpu \
+  --output "$RUN_ROOT/upstream_check.json"
+python scripts/check_exatrkx_tf_port.py --output "$RUN_ROOT/tf_port_check.json"
+```
+
+The first numerical tool checks EggNet with independent neighbor search and
+message reductions, Exa.TrkX MLPs, source-derived loss kernels with the declared
+class-mean reductions, and connected-component extraction on equivalent retained
+edges. Use `--device cuda` to check the Torch math on a GPU. The tool requests
+full FP32 matrix multiplication for its independent-reference comparison.
+The optional TensorFlow check executes the pinned training loss as well as the
+GNN forward, input gradients and parameter gradients at multiple processing depths.
+
+These checks do not equate the CLAS12 training procedure with a published recipe:
+full-pair/class-mean objectives, bidirectional GNN graphs, omitted cell features,
+coordinate-only filter inputs (`emb_channels=0`), continuous radius,
+configurable cuts and singleton rejection are explicit
+adaptations. The pinned embedding code defines LayerNorm but leaves it unused,
+whereas the Exa.TrkX paper describes LayerNorm. The pinned filter width is also
+a source configuration rather than an assertion of exact publication settings.
+Keep numerical verification output externally with the run provenance.

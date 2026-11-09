@@ -54,7 +54,7 @@ def main():
     parser.add_argument("--original-cohort", default="/previous/cohort.json")
     parser.add_argument("--parent", default="/original")
     parser.add_argument("--metrics", default="/clas12-metrics/track_finding_metrics.py")
-    parser.add_argument("--config", default="/workspace/configs/mild_tuning_20261103.json")
+    parser.add_argument("--config", default=str(Path(__file__).resolve().parents[1] / "configs/tracking.json"))
     parser.add_argument("--output", default="/results")
     args = parser.parse_args()
     output = Path(args.output)

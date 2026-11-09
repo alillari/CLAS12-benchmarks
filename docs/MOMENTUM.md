@@ -1,5 +1,8 @@
 # Momentum track manifest and evaluator
 
+Both legacy and HDF5 momentum packs are supported. The original commands and v1
+replay contract below remain unchanged; the HDF5 route has its own v2 contract.
+
 The benchmark measures entrance momentum for a single CVT track given its MC-associated cluster membership. It uses the central-tracker v6_02 event product, the saved 1k and 50k training lists, and the fixed companion validation and evaluation lists. Preparation and scoring run on CPU with the base package dependencies.
 
 ## Prepare once where the raw data are mounted
@@ -48,3 +51,58 @@ clas12-benchmarks evaluate-momentum "$OUT/tracks.npz" "$EVAL/predictions.csv.gz"
 ```
 
 The companion reader checks each prediction's original event row, segment, cluster count, truth and CVT vector against the manifest. It computes scores from manifest truth. Small numerical differences are expected because the companion reduced track truth in float32. The two CSV checks cover every score for the model on all tracks and for the model and CVT on common tracks. The summary check also compares native pT MAE and RMSE for both methods. Counts and tail fractions must agree to rounding. For continuous table values the check uses absolute tolerance 2e-5 in the reported unit and relative tolerance 2e-6. A mismatch exits with an error.
+
+## Cluster HDF5 momentum
+
+Start from a v2 event cohort prepared with `--reader hdf5`. This route freezes
+tracks from that cohort without importing legacy raw-row keys:
+
+```bash
+clas12-benchmarks prepare-momentum-hdf5 --cohort "$OUT/cohort/cohort.json" \
+  --output "$OUT/tracks-hdf5.npz" --min-clusters 12 --max-clusters 100 \
+  --cvt-pass cvt --min-cvt-purity 1.0
+clas12-benchmarks inspect-momentum "$OUT/tracks-hdf5.npz"
+```
+
+Compact primary segments resolve through positive `clusters.primary_tid` to
+event-local `particles.tid`. Truth is the valid, finite observed direct-primary
+vector already in GeV/c. It is neither the generated momentum nor the legacy
+per-point finite mean. All three components must be valid; exclusion counts and
+the selected multiplicity bounds are recorded. The default 12–100 cluster cut
+is explicit and configurable. The pack preserves measured xyz and original
+within-event point indices; model inputs remain separate from truth and CVT.
+
+The reference requires one qualified, unique-owner native candidate in the
+chosen pass, positive contributor overlap, the declared minimum purity, valid
+benchmark p/theta, and a consistent same-pass entrance trajectory. Multiple
+qualified candidates remain ambiguous. Missing or ambiguous CVT stays missing
+without removing the model track. `cvtrec` can be chosen explicitly; no legacy
+first-finite-row association is applied to native HDF5 tables.
+
+V2 packs expose `train`, `validation`, and `evaluation` roles. Optional
+`--train-track-budgets 1000 50000` adds nested prefixes `train_1000` and
+`train_50000` if those counts fit the frozen training track population. These
+are track budgets; the event cohort has its own event counts. Pack publication
+is atomic and refuses to overwrite an existing filename.
+
+V2 prediction CSV or gzip CSV uses these identity and contract columns:
+
+```text
+source_manifest_id,source_id,original_ordinal,primary_tid,schema,momentum_unit,manifest_sha256
+```
+
+Set `schema` to `clas12_momentum_predictions_v2`, `momentum_unit` to `GeV`, and
+`manifest_sha256` to `TrackManifest(pack_path).sha256` on every row. Append either
+`pred_px_gev,pred_py_gev,pred_pz_gev` or `pred_pt_gev`. Write one row per track in
+the selected role; row order is immaterial. `TrackManifest.identity_fields` and
+`identity(i)` supply the keys. Evaluate through the existing command:
+
+```bash
+clas12-benchmarks evaluate-momentum "$OUT/tracks-hdf5.npz" "$OUT/predictions.csv.gz" \
+  --role evaluation
+```
+
+The evaluator dispatches by pack schema, rejects incompatible prediction
+fingerprints/units and legacy companion rows for HDF5, and retains the existing
+all-track/common-CVT metric definitions. Both formats remain readable without
+the raw data; h5py is needed for HDF5 preparation, not packed scoring.

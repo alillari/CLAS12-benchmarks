@@ -1,6 +1,6 @@
 import importlib.util
 import json
-from contextlib import redirect_stdout
+from contextlib import redirect_stdout, nullcontext
 from io import StringIO
 from pathlib import Path
 import tempfile
@@ -51,7 +51,7 @@ def summarize_event_metrics(rows):
 
     def run_audit(self):
         argv = ["audit", "--run", str(self.root), "--cohort", "fixture", "--output", str(self.root / "audit.json")]
-        with patch.object(self.audit, "Cohort", return_value=self.cohort), patch("sys.argv", argv), redirect_stdout(StringIO()):
+        with patch.object(self.audit, "Cohort", return_value=nullcontext(self.cohort)), patch("sys.argv", argv), redirect_stdout(StringIO()):
             self.audit.main()
 
     def test_verified_predictions_and_per_event_cache_pass(self):
@@ -71,6 +71,15 @@ def summarize_event_metrics(rows):
     def test_wrong_provenance_fails_even_with_optimized_python(self):
         self.write("provenance.json", {"cohort_sha256": "wrong"})
         with self.assertRaisesRegex(ValueError, "Cohort fingerprint"):
+            self.run_audit()
+
+    def test_changed_consumed_data_fingerprint_is_rejected(self):
+        path=self.root/"provenance.json"
+        provenance=json.loads(path.read_text())
+        provenance["data_array_sha256"]={"raw":"expected"}
+        self.write("provenance.json",provenance)
+        self.cohort.data_fingerprints=lambda: {"raw":"changed"}
+        with self.assertRaisesRegex(ValueError,"Consumed data fingerprint"):
             self.run_audit()
 
 

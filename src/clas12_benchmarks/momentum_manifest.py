@@ -194,6 +194,17 @@ def build_manifest(root, prepared, destination):
 
 class TrackManifest:
     """Role-local track order, durable identities and measured model inputs."""
+    identity_fields = ("source_file", "event", "segment_label")
+    available_roles = ["train_1000", "train_50000", "validation", "evaluation"]
+
+    def __new__(cls, path):
+        with np.load(path, allow_pickle=False) as archive:
+            schema = json.loads(str(archive["metadata"])).get("schema")
+        if schema == "clas12_momentum_tracks_v2":
+            from .hdf5_momentum import PackedTracks
+            return PackedTracks(path)
+        return super().__new__(cls)
+
     def __init__(self, path):
         self.sha256 = file_sha256(path)
         with np.load(path, allow_pickle=False) as archive:

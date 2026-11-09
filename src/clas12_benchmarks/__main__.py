@@ -34,7 +34,7 @@ def export_eggnet(cohort, output, max_true_edges):
             filename = f"{role}/event{number:09d}.pyg"
             torch.save(data, output / filename)
             records.append({"file": filename, "identity": event.identity, "n_points": len(features)})
-    report = {"schema": "clas12_eggnet_export_v1", "cohort_sha256": cohort.sha256,
+    report = {"schema": "clas12_eggnet_export_v2" if cohort.is_hdf5 else "clas12_eggnet_export_v1", "cohort_sha256": cohort.sha256,
               "node_features": [f"hit_feature_{i}" for i in range(12)],
               "normalization": {name: {key: spec[key] for key in ("eta_scale", "radius_scale")}
                                 for name, (spec, _, _) in cohort.datasets.items()},
@@ -56,12 +56,20 @@ def main():
     prepare.add_argument("--data", type=Path, required=True)
     prepare.add_argument("--prepared", type=Path, required=True, help="Companion NPZ key lists and data_ready.json")
     prepare.add_argument("--output", type=Path, required=True)
+    hdf5 = sub.add_parser("prepare-momentum-hdf5", help="Pack observed primary tracks from a frozen v2 event cohort")
+    hdf5.add_argument("--cohort", required=True, type=Path)
+    hdf5.add_argument("--output", required=True, type=Path)
+    hdf5.add_argument("--min-clusters", type=int, default=12)
+    hdf5.add_argument("--max-clusters", type=int, default=100)
+    hdf5.add_argument("--cvt-pass", choices=("cvt", "cvtrec"), default="cvt")
+    hdf5.add_argument("--min-cvt-purity", type=float, default=1.0)
+    hdf5.add_argument("--train-track-budgets", nargs="*", type=int, default=[])
     audit = sub.add_parser("inspect-momentum", help="Audit a packed momentum manifest and show denominators")
     audit.add_argument("manifest", type=Path)
     score = sub.add_parser("evaluate-momentum", help="Evaluate keyed entrance predictions in GeV")
     score.add_argument("manifest", type=Path)
     score.add_argument("predictions", type=Path)
-    score.add_argument("--role", choices=("evaluation", "validation", "train_1000", "train_50000"), default="evaluation")
+    score.add_argument("--role", default="evaluation", help="A role reported by inspect-momentum")
     score.add_argument("--companion", action="store_true", help="Import and audit a companion predictions.csv[.gz]")
     score.add_argument("--reference-dir", type=Path, help="Check saved full and common population CSV tables")
     score.add_argument("--reference-model", help="Model row in the reference tables")
@@ -70,14 +78,19 @@ def main():
     if args.command == "prepare-momentum":
         from .momentum_manifest import build_manifest
         report = build_manifest(args.data, args.prepared, args.output)
+    elif args.command == "prepare-momentum-hdf5":
+        from .hdf5_momentum import build_manifest
+        report = build_manifest(args.cohort, args.output, min_clusters=args.min_clusters,
+            max_clusters=args.max_clusters, cvt_pass=args.cvt_pass, min_cvt_purity=args.min_cvt_purity,
+            train_track_budgets=args.train_track_budgets)
     elif args.command == "inspect-momentum":
         import numpy as np
         from .momentum_manifest import TrackManifest
         manifest = TrackManifest(args.manifest)
         report = {"manifest_sha256": manifest.sha256, "roles": {}}
-        for role in ("train_1000", "train_50000", "validation", "evaluation"):
+        for role in manifest.available_roles:
             rows = manifest.rows(role)
-            report["roles"][role] = {"tracks": len(rows), "source_events": len(np.unique(manifest.keys[rows, 0])),
+            report["roles"][role] = {"tracks": len(rows), "source_events": len({manifest.identity(i)[:-1] for i in rows}),
                                     "cvt_valid": int(np.isfinite(manifest.cvt[rows]).all(axis=1).sum())}
     elif args.command == "evaluate-momentum":
         from .momentum_manifest import TrackManifest
@@ -90,13 +103,14 @@ def main():
         if args.reference_summary:
             report["native_pt_checks"] = verify_native_pt(report, args.reference_summary)
     elif args.command == "inspect":
-        cohort = Cohort(args.manifest)
-        report = {"cohort_sha256": cohort.sha256, "roles": {}}
-        for role, members in cohort.roles.items():
-            points = sum(len(cohort.event(role, i).raw_features) for i in range(len(members)))
-            report["roles"][role] = {"events": len(members), "points": points}
+        with Cohort(args.manifest) as cohort:
+            report = {"cohort_sha256": cohort.sha256, "roles": {}}
+            for role, members in cohort.roles.items():
+                points = sum(len(cohort.event(role, i).raw_features) for i in range(len(members)))
+                report["roles"][role] = {"events": len(members), "points": points}
     else:
-        report = export_eggnet(Cohort(args.manifest), args.output, args.max_true_edges)
+        with Cohort(args.manifest) as cohort:
+            report = export_eggnet(cohort, args.output, args.max_true_edges)
     print(json.dumps(report, indent=2))
 
 

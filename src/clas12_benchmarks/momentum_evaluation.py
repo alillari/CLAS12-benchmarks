@@ -21,6 +21,9 @@ def _vector(row, prefix):
 
 
 def _aligned_predictions(manifest, rows, path, companion):
+    hdf5 = manifest.meta["schema"] == "clas12_momentum_tracks_v2"
+    if hdf5 and companion:
+        raise ValueError("Legacy companion predictions cannot be applied to an HDF5 target contract")
     key_to_local = {manifest.identity(i): j for j, i in enumerate(rows)}
     if len(key_to_local) != len(rows):
         raise ValueError("Manifest contains duplicate physical track identities")
@@ -28,7 +31,9 @@ def _aligned_predictions(manifest, rows, path, companion):
     with opener(path, "rt", newline="") as stream:
         reader = csv.DictReader(stream)
         columns = set(reader.fieldnames or [])
-        required = {"source_file", "event", "segment_label"}
+        required = set(manifest.identity_fields)
+        if hdf5:
+            required.update({"manifest_sha256", "schema", "momentum_unit"})
         if companion:
             required.update({"n_hits", "source_event_index", "truth_segment_label"})
             required.update(f"{prefix}_{axis}_gev" for prefix in ("true", "cvt_entrance", "adapter") for axis in AXES)
@@ -47,7 +52,14 @@ def _aligned_predictions(manifest, rows, path, companion):
             archived_truth = np.empty_like(pred)
             archived_cvt = np.empty_like(pred)
         for line in reader:
-            key = (line["source_file"], int(line["event"]), int(line["segment_label"]))
+            if hdf5:
+                if (line["manifest_sha256"] != manifest.sha256
+                        or line["schema"] != "clas12_momentum_predictions_v2" or line["momentum_unit"] != "GeV"):
+                    raise ValueError("Prediction schema, units or manifest fingerprint mismatch")
+                key = (line["source_manifest_id"], int(line["source_id"]),
+                       int(line["original_ordinal"]), int(line["primary_tid"]))
+            else:
+                key = (line["source_file"], int(line["event"]), int(line["segment_label"]))
             j = key_to_local.get(key)
             if j is None or seen[j]:
                 raise ValueError(f"Unexpected or duplicate prediction identity {key}")
@@ -121,7 +133,7 @@ def evaluate(manifest, path, role="evaluation", companion=False):
     truth, cvt = manifest.truth[rows], manifest.cvt[rows]
     common = np.isfinite(cvt).all(axis=1)
     reference = cvt[common] if quantity == "vector" else _pt(cvt[common])
-    return {"schema": "clas12_momentum_scores_v1", "manifest_sha256": manifest.sha256,
+    return {"schema": "clas12_momentum_scores_v2" if manifest.meta["schema"] == "clas12_momentum_tracks_v2" else "clas12_momentum_scores_v1", "manifest_sha256": manifest.sha256,
             "prediction_sha256": file_sha256(path), "role": role, "quantity": quantity,
             "n_missing_cvt": int((~common).sum()), "companion_row_audit": audit,
             "all_tracks": _score(truth, pred, quantity),
@@ -131,6 +143,8 @@ def evaluate(manifest, path, role="evaluation", companion=False):
 
 def verify_score_tables(result, directory, model):
     """Compare every published numeric score in both companion population tables."""
+    if result.get("schema") == "clas12_momentum_scores_v2":
+        raise ValueError("Legacy reference tables cannot verify the HDF5 target contract")
     if result["quantity"] != "vector" or result["role"] != "evaluation" or model == "cvt":
         raise ValueError("Companion comparison tables require vector predictions on the evaluation role")
     checks = {}
@@ -164,6 +178,8 @@ def verify_score_tables(result, directory, model):
 
 def verify_native_pt(result, summary_path):
     """Check the native evaluator's pT scores, which the campaign CSVs omit."""
+    if result.get("schema") == "clas12_momentum_scores_v2":
+        raise ValueError("Legacy reference summaries cannot verify the HDF5 target contract")
     summary = json.loads(Path(summary_path).read_text())
     if summary["evaluation_contract"] != "clas12_momentum_entrance_v1" or result["role"] != "evaluation":
         raise ValueError("Expected companion entrance evaluation")

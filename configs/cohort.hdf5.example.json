@@ -1,0 +1,25 @@
+{
+  "schema": "clas12_baseline_cohort_v2",
+  "_usage": "Generate a complete fingerprinted cohort with python -m clas12_benchmarks.prepare_cohort ROOT OUTPUT --reader hdf5. This file documents the contract and is not a consumable cohort.",
+  "datasets": {
+    "train": {
+      "root": "/REPLACE/with/cvt_cluster_hdf5_20261103_002",
+      "source_split": "train",
+      "storage_format": "cvt-clusters-h5-v1",
+      "token_kind": "clusters",
+      "input_layout": "xyz",
+      "feature_recipe": "cluster_xyz_eta_phi_radius_v1",
+      "noise_policy": "primary_unassigned_is_noise_v1",
+      "pid_policy": "abs_pdg_pion_kaon_proton_electron_other_v1",
+      "eta_scale": 1.0,
+      "radius_scale": 1.0,
+      "source_contract": "GENERATED from manifest, schema, recipe and geometry fingerprints",
+      "selected_content_sha256": "GENERATED from frozen selected identities and consumed fields"
+    }
+  },
+  "roles": {
+    "train": [],
+    "val": [],
+    "test": []
+  }
+}

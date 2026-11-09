@@ -87,6 +87,36 @@ class DataPortTests(unittest.TestCase):
             self.cohort()
         self.assertFalse((self.root / "pid_target_pretrain").exists())
 
+    def test_external_array_payload_is_bound_to_provenance(self):
+        folder = self.root / "manifests"
+        folder.mkdir()
+        self.manifest = folder / "cohort.json"
+        with self.cohort() as cohort:
+            before = cohort.data_fingerprints()
+            self.assertTrue(before)
+            array = RaggedMmap(self.root / "features_pretrain", mode="r+")
+            array[0][:] *= 2
+            self.assertNotEqual(before, cohort.data_fingerprints())
+
+    def test_finite_coordinates_cannot_emit_nonfinite_features(self):
+        array = RaggedMmap(self.root / "features_pretrain", mode="r+")
+        array[0][:] = np.array([1e-30, 0, 1e30], np.float32)
+        with np.errstate(over="ignore", invalid="ignore"), self.assertRaisesRegex(ValueError,"Nonfinite normalized"):
+            self.cohort().event("train",0)
+
+    def test_legacy_preparation_does_not_create_missing_input_arrays(self):
+        from clas12_benchmarks.prepare_cohort import prepare
+        shutil.rmtree(self.root/"features_pretrain")
+        with self.assertRaises(FileNotFoundError):
+            prepare(self.root,self.root/"output",train=1,val=1,test=1)
+        self.assertFalse((self.root/"features_pretrain").exists())
+
+    def test_hdf5_noise_policy_cannot_silently_apply_to_legacy(self):
+        from clas12_benchmarks.prepare_cohort import prepare
+        with self.assertRaisesRegex(ValueError,"requires the HDF5"):
+            prepare(self.root,self.root/"output",noise_policy="primary_valid_only_v1")
+        self.assertFalse((self.root/"output").exists())
+
     def test_neighbors_do_not_depend_on_truth_and_exclude_self(self):
         event = self.cohort().event("train", 0)
         before = eggnet_features(event)

@@ -10,6 +10,7 @@ import numpy as np
 from mmap_ninja import RaggedMmap
 
 from .data import Cohort, file_sha256
+from .sources import open_ragged
 
 
 def write_json(path, value):
@@ -33,7 +34,15 @@ def draw_excluding(rng, population, count, excluded):
     return selected
 
 
-def prepare(root, output, train=10000, val=1000, test=2000, seed=1337, extend_from=None):
+def prepare(root, output, train=10000, val=1000, test=2000, seed=1337, extend_from=None, reader="ragged_mmap",
+            noise_policy="primary_unassigned_is_noise_v1"):
+    if reader == "hdf5":
+        from .hdf5_cohort import prepare as prepare_hdf5
+        return prepare_hdf5(root, output, train, val, test, seed, extend_from, noise_policy)
+    if reader != "ragged_mmap":
+        raise ValueError(f"Unsupported reader: {reader}")
+    if noise_policy != "primary_unassigned_is_noise_v1":
+        raise ValueError("Selecting a noise policy requires the HDF5 reader")
     root, output = Path(root), Path(output)
     if output.exists():
         raise FileExistsError(output)
@@ -60,7 +69,7 @@ def prepare(root, output, train=10000, val=1000, test=2000, seed=1337, extend_fr
     roles, datasets, identities = {}, {}, set()
     train_xyz = []
     for split, counts in (("pretrain", (train, val)), ("test", (test,))):
-        features = RaggedMmap(root / f"features_{split}", mode="r")
+        features = open_ragged(root, "features", split)
         if previous:
             if split == "pretrain":
                 new_val = draw_excluding(rng, len(features), val - len(preserved["val"]), preserved["train"] + preserved["val"])
@@ -97,7 +106,7 @@ def prepare(root, output, train=10000, val=1000, test=2000, seed=1337, extend_fr
             "samples_sha256": digest.hexdigest()}
         if previous and digest.hexdigest() != previous_meta["source_splits"][split]["samples_sha256"]:
             raise ValueError("Parent sample identities changed")
-        arrays = {name: RaggedMmap(root / f"{name}_{split}", mode="r") for name in
+        arrays = {name: open_ragged(root, name, split) for name in
                   ("features", "seg_target", "coatjava_seg_pred")}
         for name, array in arrays.items():
             if len(array) != n_rows:
@@ -158,6 +167,10 @@ if __name__ == "__main__":
     p.add_argument("--val", type=int, default=1000)
     p.add_argument("--test", type=int, default=2000)
     p.add_argument("--seed", type=int, default=1337)
+    p.add_argument("--reader", choices=("ragged_mmap", "hdf5"), default="ragged_mmap")
+    p.add_argument("--noise-policy", choices=("primary_unassigned_is_noise_v1", "primary_valid_only_v1"),
+                   default="primary_unassigned_is_noise_v1")
     p.add_argument("--extend-from", help="Previous prepared cohort directory; preserve train and use fresh test events")
     args = p.parse_args()
-    prepare(**vars(args))
+    with prepare(**vars(args)):
+        pass

@@ -9,10 +9,11 @@ import numpy as np
 from sklearn.cluster import DBSCAN
 import torch
 
-from .data import Cohort, file_sha256
+from .data import Cohort, file_sha256, event_key
+from .sequences import event_sequence, derived_sequence
 from .prepare_cohort import write_json
 from .tracking import (metric_module, embedding_output, candidates, filter_probabilities,
-                       graph_predictions, evaluate)
+                       graph_predictions, evaluate, eggnet_prediction)
 from .upstream import eggnet, exatrkx_embedding, exatrkx_filter, ROOT
 from .interaction_network import SegmentClassifier
 
@@ -23,71 +24,68 @@ def evaluate_frozen(parent, original_cohort, cohort_path, output, device="cuda",
     if (output / "provenance.json").exists():
         raise FileExistsError(output)
     provenance = json.loads((parent / "provenance.json").read_text())
-    old, cohort = Cohort(original_cohort), Cohort(cohort_path)
-    if old.sha256 != provenance["cohort_sha256"]:
-        raise ValueError("Wrong original cohort")
-    if len(old.roles["train"]) != len(cohort.roles["train"]):
-        raise ValueError("Training population changed")
-    for i in range(len(old.roles["train"])):
-        a, b = old.event("train", i), cohort.event("train", i)
-        if (a.identity["source_file"], a.identity["event"]) != (b.identity["source_file"], b.identity["event"]):
-            raise ValueError("Training identities/order changed")
-        np.testing.assert_array_equal(a.positions, b.positions)
-        np.testing.assert_array_equal(a.raw_features, b.raw_features)
-        np.testing.assert_array_equal(a.labels["seg_target"], b.labels["seg_target"])
-    for name in ("vendor/eggnet/eggnet/models/eggnet.py", "vendor/eggnet/eggnet/models/utils/utils.py",
-                 "vendor/exatrkx/exatrkx/src/embedding/layerless_embedding.py", "vendor/exatrkx/exatrkx/src/filter/vanilla_filter.py",
-                 "src/clas12_benchmarks/interaction_network.py"):
-        if file_sha256(ROOT / name) != provenance["source_sha256"][name]:
-            raise ValueError(f"Frozen architecture changed: {name}")
-    metrics = metric_module(parent / "track_finding_metrics.py", output)
-    if file_sha256(output / "track_finding_metrics.py") != provenance["metric_sha256"]:
-        raise ValueError("Frozen evaluator changed")
-    selected = json.loads((parent / "selected_checkpoints.json").read_text())
-    for row in selected:
-        path = parent / f"{row['stage']}_best.pt"
-        if file_sha256(path) != row["checkpoint_sha256"]:
-            raise ValueError("Frozen checkpoint changed")
-        shutil.copyfile(path, output / path.name)
-    shutil.copyfile(parent / "selected_checkpoints.json", output / "selected_checkpoints.json")
-    shutil.copyfile(parent / "frozen_selection.json", output / "frozen_selection.json")
-    config, method = provenance["config"], provenance["method"]
-    provenance.update(training_git_commit=provenance["git_commit"], git_commit=os.environ.get("BENCHMARK_GIT_COMMIT"),
-        original_cohort_sha256=old.sha256, cohort_sha256=cohort.sha256, evaluation_only=True,
-        parent_run=str(parent), thresholds_recalibrated=False, preserved_training_verified=True,
-        evaluation_source_sha256={str(p.relative_to(ROOT)): file_sha256(p) for p in (ROOT / "src").rglob("*.py")})
-    data_root = Path(cohort_path).resolve().parent
-    provenance["data_array_sha256"] = {str(p.relative_to(data_root)): file_sha256(p)
-        for directory in sorted(data_root.iterdir()) if directory.is_dir()
-        for p in sorted(directory.rglob("*")) if p.is_file()}
-    write_json(output / "provenance.json", provenance)
-    torch.set_num_threads(threads)
-    device = torch.device(device)
-    if device.type == "cuda" and not torch.cuda.is_available():
-        raise RuntimeError("CUDA required")
-    def load(model, name):
-        model.load_state_dict(torch.load(parent / f"{name}_best.pt", map_location="cpu", weights_only=False)["model"], strict=True)
-        return model.to(device).eval()
-    selection = json.loads((parent / "frozen_selection.json").read_text())
-    test = [cohort.event("test", i) for i in range(len(cohort.roles["test"]))]
-    with torch.no_grad():
-        if method == "eggnet":
-            model = load(eggnet(config["eggnet"]), "embedding")
-            predictions = [DBSCAN(eps=selection["eps"], min_samples=selection["min_samples"]).fit_predict(
-                embedding_output(model, e, "eggnet", device).cpu().numpy()).astype(np.int64) for e in test]
-        else:
-            ec = config["exatrkx"]
-            model = load(exatrkx_embedding(ec["embedding"]), "embedding")
-            filt = load(exatrkx_filter(ec["filter"]), "filter")
-            gnn = load(SegmentClassifier(4, ec["gnn_processing_steps"]), "gnn")
-            filter_selection = json.loads((parent / "filter_selection.json").read_text())
-            write_json(output / "filter_selection.json", filter_selection)
-            cut = filter_selection["selected"]["cut"]
-            graphs = [candidates(model, e, ec, device) for e in test]
-            graphs = [g[:, filter_probabilities(filt, e, g, device) >= cut] for e, g in zip(test, graphs, strict=True)]
-            predictions = graph_predictions(gnn, test, graphs, selection["gnn_cut"], ec, device)
-    result = evaluate(test, predictions, metrics, output, method, cohort.sha256)
-    print("FROZEN_EVALUATION_COMPLETE " + json.dumps(result), flush=True)
+    with Cohort(original_cohort) as old, Cohort(cohort_path) as cohort:
+        if old.sha256 != provenance["cohort_sha256"]:
+            raise ValueError("Wrong original cohort")
+        if len(old.roles["train"]) != len(cohort.roles["train"]):
+            raise ValueError("Training population changed")
+        for i in range(len(old.roles["train"])):
+            a, b = old.event("train", i), cohort.event("train", i)
+            if event_key(a.identity) != event_key(b.identity):
+                raise ValueError("Training identities/order changed")
+            np.testing.assert_array_equal(a.positions, b.positions)
+            np.testing.assert_array_equal(a.raw_features, b.raw_features)
+            np.testing.assert_array_equal(a.labels["seg_target"], b.labels["seg_target"])
+        for name in ("vendor/eggnet/eggnet/models/eggnet.py", "vendor/eggnet/eggnet/models/utils/utils.py",
+                     "vendor/exatrkx/exatrkx/src/embedding/layerless_embedding.py", "vendor/exatrkx/exatrkx/src/filter/vanilla_filter.py",
+                     "src/clas12_benchmarks/interaction_network.py"):
+            if file_sha256(ROOT / name) != provenance["source_sha256"][name]:
+                raise ValueError(f"Frozen architecture changed: {name}")
+        metrics = metric_module(parent / "track_finding_metrics.py", output)
+        if file_sha256(output / "track_finding_metrics.py") != provenance["metric_sha256"]:
+            raise ValueError("Frozen evaluator changed")
+        selected = json.loads((parent / "selected_checkpoints.json").read_text())
+        for row in selected:
+            path = parent / f"{row['stage']}_best.pt"
+            if file_sha256(path) != row["checkpoint_sha256"]:
+                raise ValueError("Frozen checkpoint changed")
+            shutil.copyfile(path, output / path.name)
+        shutil.copyfile(parent / "selected_checkpoints.json", output / "selected_checkpoints.json")
+        shutil.copyfile(parent / "frozen_selection.json", output / "frozen_selection.json")
+        config, method = provenance["config"], provenance["method"]
+        provenance.update(training_git_commit=provenance["git_commit"], git_commit=os.environ.get("BENCHMARK_GIT_COMMIT"),
+            original_cohort_sha256=old.sha256, cohort_sha256=cohort.sha256, evaluation_only=True,
+            parent_run=str(parent), thresholds_recalibrated=False, preserved_training_verified=True,
+            evaluation_source_sha256={str(p.relative_to(ROOT)): file_sha256(p) for p in (ROOT / "src").rglob("*.py")})
+        provenance["data_array_sha256"] = cohort.data_fingerprints()
+        write_json(output / "provenance.json", provenance)
+        torch.set_num_threads(threads)
+        device = torch.device(device)
+        if device.type == "cuda" and not torch.cuda.is_available():
+            raise RuntimeError("CUDA required")
+        def load(model, name):
+            model.load_state_dict(torch.load(parent / f"{name}_best.pt", map_location="cpu", weights_only=False)["model"], strict=True)
+            return model.to(device).eval()
+        selection = json.loads((parent / "frozen_selection.json").read_text())
+        test = event_sequence(cohort, "test")
+        with torch.no_grad():
+            if method == "eggnet":
+                model = load(eggnet(config["eggnet"]), "embedding")
+                predictions = derived_sequence(test, lambda i: eggnet_prediction(model, test[i], selection, device))
+            else:
+                ec = config["exatrkx"]
+                model = load(exatrkx_embedding(ec["embedding"]), "embedding")
+                filt = load(exatrkx_filter(ec["filter"]), "filter")
+                gnn = load(SegmentClassifier(4, ec["gnn_processing_steps"]), "gnn")
+                filter_selection = json.loads((parent / "filter_selection.json").read_text())
+                write_json(output / "filter_selection.json", filter_selection)
+                cut = filter_selection["selected"]["cut"]
+                raw_graphs = derived_sequence(test, lambda i: candidates(model, test[i], ec, device))
+                graphs = derived_sequence(test, lambda i: raw_graphs[i][:,
+                    filter_probabilities(filt, test[i], raw_graphs[i], device) >= cut])
+                predictions = graph_predictions(gnn, test, graphs, selection["gnn_cut"], ec, device)
+        result = evaluate(test, predictions, metrics, output, method, cohort.sha256)
+        print("FROZEN_EVALUATION_COMPLETE " + json.dumps(result), flush=True)
 
 
 if __name__ == "__main__":

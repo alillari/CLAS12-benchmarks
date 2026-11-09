@@ -8,6 +8,7 @@ import math
 import os
 from pathlib import Path
 import random
+import resource
 import shutil
 import subprocess
 import sys
@@ -23,6 +24,7 @@ from torch import nn
 from torch.nn import functional as F
 
 from .data import Cohort, eggnet_features, file_sha256
+from .sequences import CachedSequence, event_sequence, derived_sequence
 from .interaction_network import SegmentClassifier
 from .predictions import save_predictions
 from .prepare_cohort import write_json
@@ -204,6 +206,12 @@ def evaluate(events, predictions, metrics, output=None, method=None, cohort_sha=
     return result
 
 
+@torch.no_grad()
+def eggnet_prediction(model, event, selection, device):
+    embedding = embedding_output(model, event, "eggnet", device).cpu().numpy()
+    return DBSCAN(eps=selection["eps"], min_samples=selection["min_samples"]).fit_predict(embedding).astype(np.int64)
+
+
 def track_f1(summary):
     m = summary["metrics"]
     den = m["n_true_tracks"] + m["n_pred_tracks"]
@@ -222,6 +230,8 @@ def learning_rate_at_step(config, step):
 
 
 def train_stage(model, name, events, validation, loss_fn, config, output, device, resume=False, score_fn=None):
+    if not len(events) or not len(validation):
+        raise ValueError("Training and validation require at least one event")
     model.to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=config["learning_rate"], weight_decay=config["weight_decay"])
     rng = np.random.default_rng(config["seed"])
@@ -301,11 +311,11 @@ def train_stage(model, name, events, validation, loss_fn, config, output, device
 
 @torch.no_grad()
 def select_eggnet(model, events, config, metrics, device):
-    embeddings = [embedding_output(model, event, "eggnet", device).cpu().numpy() for event in events]
+    embeddings = derived_sequence(events, lambda i: embedding_output(model, events[i], "eggnet", device).detach().cpu().numpy())
     trials = []
     for eps in config["dbscan_eps"]:
         for min_samples in config["dbscan_min_samples"]:
-            labels = [DBSCAN(eps=eps, min_samples=min_samples).fit_predict(z).astype(np.int64) for z in embeddings]
+            labels = (DBSCAN(eps=eps, min_samples=min_samples).fit_predict(z).astype(np.int64) for z in embeddings)
             result = evaluate(events, labels, metrics)
             trials.append({"eps": eps, "min_samples": min_samples, "track_f1": track_f1(result), **result})
     # Stable tie break: declared grid order; no test input to selection.
@@ -319,8 +329,8 @@ def filter_probabilities(model, event, edges, device):
 
 @torch.no_grad()
 def select_filter(model, events, graphs, config, device):
-    probs = [filter_probabilities(model, e, g, device) for e, g in zip(events, graphs, strict=True)]
-    truths = [pair_labels(torch.as_tensor(e.labels["seg_target"]), g) for e, g in zip(events, graphs, strict=True)]
+    probs = derived_sequence(events, lambda i: filter_probabilities(model, events[i], graphs[i], device))
+    truths = derived_sequence(events, lambda i: pair_labels(torch.as_tensor(events[i].labels["seg_target"]), graphs[i]))
     trials = []
     positives = sum(int(y.sum()) for y in truths)
     if not positives:
@@ -337,20 +347,18 @@ def select_filter(model, events, graphs, config, device):
 
 @torch.no_grad()
 def graph_scores(model, events, graphs, device):
-    output = []
-    for event, graph in zip(events, graphs, strict=True):
-        graph = graph.to(device)
+    @torch.no_grad()
+    def score(i):
+        event, graph = events[i], graphs[i].to(device)
         bidir = torch.cat((graph, graph.flip(0)), dim=1)
         scores = model(torch.as_tensor(event.positions, device=device), bidir)[-1].sigmoid()
-        # An undirected connection requires the mean of its two directed scores.
-        probabilities = (scores[:graph.shape[1]] + scores[graph.shape[1]:]) * .5
-        output.append(probabilities.cpu())
-    return output
+        return ((scores[:graph.shape[1]] + scores[graph.shape[1]:]) * .5).cpu()
+    return derived_sequence(events, score)
 
 
 def labels_from_scores(events, graphs, probabilities, cut, config):
-    return [components(len(event.raw_features), graph[:, score >= cut].numpy(), config["min_component_size"])
-            for event, graph, score in zip(events, graphs, probabilities, strict=True)]
+    return derived_sequence(events, lambda i: components(len(events[i].raw_features),
+        graphs[i][:, probabilities[i] >= cut].numpy(), config["min_component_size"]))
 
 
 def graph_predictions(model, events, graphs, cut, config, device):
@@ -377,14 +385,18 @@ def run(args):
     device = torch.device(args.device)
     if device.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA is required; refusing silent CPU fallback")
-    cohort = Cohort(args.cohort)
+    with Cohort(args.cohort) as cohort:
+        return _run_cohort(args, output, config, device, cohort)
+
+
+def _run_cohort(args, output, config, device, cohort):
+    started = time.monotonic()
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
     metrics = metric_module(args.metrics, output)
     source_files = sorted(p for folder in ("src", "configs", "vendor") for p in (ROOT / folder).rglob("*")
                           if p.is_file() and p.suffix in (".py", ".json", ".yaml") and "__pycache__" not in p.parts)
-    data_root = Path(args.cohort).resolve().parent
-    data_hashes = {str(p.relative_to(data_root)): file_sha256(p)
-        for directory in sorted(data_root.iterdir()) if directory.is_dir()
-        for p in sorted(directory.rglob("*")) if p.is_file()}
+    data_hashes = cohort.data_fingerprints()
     provenance = {"method": args.method, "config": config, "cohort_sha256": cohort.sha256,
         "metric_sha256": file_sha256(output / "track_finding_metrics.py"), "metrics_source": args.metrics,
         "git_commit": os.environ.get("BENCHMARK_GIT_COMMIT"), "sources_lock": json.loads((ROOT / "sources.lock.json").read_text()),
@@ -407,7 +419,7 @@ def run(args):
     role_events = {}
     for role in ("train", "val"):
         count = min(len(cohort.roles[role]), 16 if role == "train" else 8) if args.smoke else len(cohort.roles[role])
-        role_events[role] = [cohort.event(role, i) for i in range(count)]
+        role_events[role] = event_sequence(cohort, role, count, config.get("event_cache_size", 8))
     train, val = role_events["train"], role_events["val"]
     if config.get("track_checkpoint_selection"):
         checkpoint_indices = np.random.default_rng(config["seed"] + 1).choice(len(val), min(len(val), config["checkpoint_validation_events"]), replace=False).tolist()
@@ -437,7 +449,8 @@ def run(args):
         write_json(output / "validation_selection.json", {"selected": selection, "trials": trials})
     else:
         ec = config["exatrkx"]
-        graphs = {role: [candidates(model, e, ec, device) for e in events] for role, events in role_events.items()}
+        graphs = {role: derived_sequence(events, lambda i, events=events: candidates(model, events[i], ec, device))
+                  for role, events in role_events.items()}
         diagnostics = {}
         for role, events in role_events.items():
             total = found = 0
@@ -450,7 +463,7 @@ def run(args):
                 "n_candidate_edges": sum(g.shape[1] for g in graphs[role])}
         write_json(output / "candidate_diagnostics.json", diagnostics)
         filt = exatrkx_filter(ec["filter"])
-        train_items = list(zip(train, graphs["train"]))
+        train_items = derived_sequence(train, lambda i: (train[i], graphs["train"][i]))
         checkpoint_graphs = [graphs["val"][i] for i in checkpoint_indices]
         val_items = list(zip(checkpoint_val, checkpoint_graphs))
         def filter_objective(m, item):
@@ -463,7 +476,9 @@ def run(args):
         write_json(output / "filter_selection.json", {"selected": filter_selection, "trials": filter_trials})
         cut = filter_selection["cut"]
         for role, events in role_events.items():
-            graphs[role] = [g[:, filter_probabilities(filt, e, g, device) >= cut] for e, g in zip(events, graphs[role], strict=True)]
+            original_graphs = graphs[role]
+            graphs[role] = derived_sequence(events, lambda i, events=events, gs=original_graphs:
+                gs[i][:, filter_probabilities(filt, events[i], gs[i], device) >= cut])
         gnn = SegmentClassifier(4, ec["gnn_processing_steps"])
         def gnn_objective(m, item):
             event, graph = item
@@ -480,7 +495,7 @@ def run(args):
                 scores = graph_scores(m, events, gs, device)
                 return max(track_f1(evaluate(events, labels_from_scores(events, gs, scores, threshold, ec), metrics))
                            for threshold in ec["checkpoint_gnn_cuts"])
-        selected_stages.append(train_stage(gnn, "gnn", list(zip(train, graphs["train"])),
+        selected_stages.append(train_stage(gnn, "gnn", derived_sequence(train, lambda i: (train[i], graphs["train"][i])),
             list(zip(checkpoint_val, checkpoint_graphs)), gnn_objective, config, output, device, args.resume, gnn_score))
         trials = []
         val_scores = graph_scores(gnn, val, graphs["val"], device)
@@ -494,19 +509,31 @@ def run(args):
     write_json(output / "frozen_selection.json", selection)
     if args.smoke:
         write_json(output / "smoke_complete.json", {"stages": selected_stages, "validation": selection, "test_evaluated": False})
+        record_resources(cohort, device, output, started)
         print("SMOKE_COMPLETE: test was not evaluated", flush=True)
         return
-    test = [cohort.event("test", i) for i in range(len(cohort.roles["test"]))]
+    test = event_sequence(cohort, "test", cache_size=config.get("event_cache_size", 8))
     with torch.no_grad():
         if args.method == "eggnet":
-            predictions = [DBSCAN(eps=selection["eps"], min_samples=selection["min_samples"]).fit_predict(
-                embedding_output(model, e, "eggnet", device).cpu().numpy()).astype(np.int64) for e in test]
+            predictions = derived_sequence(test, lambda i: eggnet_prediction(model, test[i], selection, device))
         else:
-            test_graphs = [candidates(model, e, ec, device) for e in test]
-            test_graphs = [g[:, filter_probabilities(filt, e, g, device) >= cut] for e, g in zip(test, test_graphs, strict=True)]
+            raw_graphs = derived_sequence(test, lambda i: candidates(model, test[i], ec, device))
+            test_graphs = derived_sequence(test, lambda i: raw_graphs[i][:,
+                filter_probabilities(filt, test[i], raw_graphs[i], device) >= cut])
             predictions = graph_predictions(gnn, test, test_graphs, selection["gnn_cut"], ec, device)
     result = evaluate(test, predictions, metrics, output, args.method, cohort.sha256)
+    record_resources(cohort, device, output, started)
     print("RUN_COMPLETE " + json.dumps(result, allow_nan=False), flush=True)
+
+
+def record_resources(cohort, device, output, started):
+    write_json(output / "resources.json", {
+        "device": str(device), "elapsed_seconds": time.monotonic() - started,
+        "peak_rss_kib": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
+        "peak_cuda_allocated_bytes": torch.cuda.max_memory_allocated(device) if device.type == "cuda" else None,
+        "peak_cuda_reserved_bytes": torch.cuda.max_memory_reserved(device) if device.type == "cuda" else None,
+        "live_hdf5_handles_before_close": {name: len(source._files) for name, source in cohort.sources.items()
+                                          if hasattr(source, "_files")}})
 
 
 if __name__ == "__main__":

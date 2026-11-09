@@ -94,7 +94,8 @@ def sweep(args):
     if hashes != old["data_array_sha256"]:
         raise ValueError("Prepared data fingerprints changed")
     for path in ("vendor/exatrkx/exatrkx/src/embedding/layerless_embedding.py", "vendor/exatrkx/exatrkx/src/filter/vanilla_filter.py",
-                 "src/clas12_benchmarks/upstream.py", "src/clas12_benchmarks/interaction_network.py"):
+                 "src/clas12_benchmarks/upstream.py", "src/clas12_benchmarks/interaction_network.py",
+                 "src/clas12_benchmarks/tracking.py", "src/clas12_benchmarks/data.py", "src/clas12_benchmarks/graphs.py"):
         if file_sha256(ROOT / path) != old["source_sha256"][path]:
             raise ValueError(f"Frozen model source changed: {path}")
     metrics = metric_module(parent / "track_finding_metrics.py", output)

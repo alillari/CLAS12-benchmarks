@@ -306,6 +306,45 @@ cohort size changes the number of passes, so verify its population before launch
 Use fresh external outputs; retain the last checkpoint for explicit resume and
 keep results and comparisons outside Git.
 
+## Sweep a frozen Exa.TrkX GNN cut
+
+```bash
+python -m clas12_benchmarks.exatrkx_threshold_sweep --run "$RUN_ROOT/exatrkx" \
+  --cohort "$RUN_ROOT/cohort/cohort.json" --device cpu --threads 4 \
+  --output "$RUN_ROOT/gnn_threshold_sweep"
+python scripts/plot_exatrkx_threshold_sweep.py --input "$RUN_ROOT/gnn_threshold_sweep"
+```
+
+This validation-only tool holds the saved embedding, candidates, filter, GNN
+weights, evaluator and data fixed. It verifies their fingerprints and computes
+the GNN scores once per event. Only the final probability cut varies; an edge
+survives when `score >= cut`. The saved cut is always included. Override the
+default scan with `--cuts`, or use `--max-events` for a smoke check. No parent
+checkpoint or selection file is changed. Use a fresh external output directory.
+
+The sweep uses the same cohort fingerprints and inference/reader source checks
+as the diagnostic above, including native HDF5 and externally referenced legacy
+arrays. Undefined metrics remain `null` and appear as gaps in the threshold plots.
+
+Reported F1 is `2 * pooled matched tracks / (pooled truth + predicted tracks)`;
+purity and efficiency use those same pooled counts. Signal ARI and merge rate
+are event means from the frozen evaluator. Full connectivity requires all hits
+of a true track to connect through same-track edges alone. Clean connectivity
+additionally requires that the actual reconstructed component contain no hits
+from another signal track. Background contamination is allowed by this clean
+definition and is reported separately. Recovery counts show both newly
+connected tracks that remain unmerged and previously clean tracks now touching
+a merge, relative to the saved cut.
+
+`threshold_curve.json`, `summary.json`, `per_event.jsonl` and `provenance.json`
+contain the scan, descriptive validation selections, paired event bootstrap
+intervals and provenance. Intervals are conditional on the frozen weights and
+do not correct for selecting a cut on this same validation population. No test
+events are evaluated. `edge_scores.npz` caches local-index filtered edges and
+scores, event offsets and point counts in validation order; identities are in
+`per_event.jsonl`. Keep all outputs and plots with external run artifacts,
+outside Git. Plotting requires Matplotlib.
+
 ## Check upstream mathematical compatibility
 
 ```bash

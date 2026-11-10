@@ -50,10 +50,21 @@ def contract(value=None, *, new_run=False):
 
 
 def load_metrics(path=DEFAULT_METRICS):
-    spec = importlib.util.spec_from_file_location("clas12_finding_metrics_" + file_sha256(path), path)
+    """Execute the exact source bytes without reading or writing bytecode caches."""
+    path = Path(path).resolve()
+    source = path.read_bytes()
+    spec = importlib.util.spec_from_file_location("clas12_finding_metrics_" + hashlib.sha256(source).hexdigest(), path)
     module = importlib.util.module_from_spec(spec)
+    previous = sys.modules.get(spec.name)
     sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    try:
+        exec(compile(source, str(path), "exec", dont_inherit=True), module.__dict__)
+    except BaseException:
+        if previous is None:
+            sys.modules.pop(spec.name, None)
+        else:
+            sys.modules[spec.name] = previous
+        raise
     return module
 
 

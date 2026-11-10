@@ -467,6 +467,13 @@ COATJAVA scores, scorer/eligibility snapshots, and a receipt with parent/predict
 truth policy, relabelled-cluster count and provenance fingerprints. Original
 results are never overwritten; failed attempts do not publish a summary and
 require a fresh output path.
+For materialized legacy cohorts, output must also be outside the cohort directory:
+its historical fingerprint includes every nested file. A model-only legacy run
+can be rescored without COATJAVA; its reference event list is empty and no
+model-minus-reference comparison is emitted.
+Scorer snapshots are compiled directly from their hashed source bytes. Existing
+bytecode caches are ignored, and loading an archived scorer does not create new
+cache files inside that archive.
 For a scoring-only installation use `python -m pip install -e '.[evaluation,hdf5]'`;
 Torch and graph packages are unnecessary for this command.
 

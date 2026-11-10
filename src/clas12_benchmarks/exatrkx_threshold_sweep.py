@@ -96,6 +96,26 @@ def sweep(args):
         return _sweep_cohort(args, parent, output, old, cohort)
 
 
+def validation_report(curve, rows, saved_cut, *, mc=False, replicates=1000):
+    """Descriptive selections and paired intervals; never change the saved cut."""
+    baseline = next(row for row in curve if row["cut"] == saved_cut)
+    best = max(curve, key=lambda r: r["track_f1_global"] if r["track_f1_global"] is not None else -1.)
+    lower = [row for row in curve if row["cut"] < saved_cut]
+    best_lower = max(lower, key=lambda r: r["track_f1_global"] if r["track_f1_global"] is not None else -1.) if lower else None
+    best_ari = max(curve, key=lambda r: r["metrics"]["ari_signal"] if r["metrics"]["ari_signal"] is not None else -1.)
+    best_clean = max(curve, key=lambda r: r["clean_fully_connected_track_fraction"] or -1.)
+    selections = {"baseline": baseline, "best_by_f1": best, "best_lower_cut_by_f1": best_lower,
+                  "best_by_ari": best_ari, "best_by_clean_connectivity": best_clean}
+    if mc:
+        selections["best_by_mc_dice"] = max(curve, key=lambda r: r["metrics"]["mc_track_dice_mean"]
+                                            if r["metrics"]["mc_track_dice_mean"] is not None else -1.)
+    comparisons = {}
+    for row in selections.values():
+        if row is not None and row["cut"] != saved_cut and str(row["cut"]) not in comparisons:
+            comparisons[str(row["cut"])] = paired_delta_bootstrap(rows[row["cut"]], rows[saved_cut], replicates=replicates)
+    return {"saved_cut": saved_cut, **selections, "paired_delta_vs_saved_cut": comparisons, "validation_only": True}
+
+
 def _sweep_cohort(args, parent, output, old, cohort):
     if cohort.sha256 != old["cohort_sha256"]:
         raise ValueError("Parent cohort fingerprint mismatch")
@@ -196,32 +216,16 @@ def _sweep_cohort(args, parent, output, old, cohort):
                       "merge_exposed_true_track_fraction": ratio(sum(r["merge_exposed_true_tracks"] for r in records), g["tracks"]),
                       "merged_predicted_track_fraction_global": ratio(sum(r["merged_predicted_tracks"] for r in records), m["n_pred_tracks"]),
                       "recovery_vs_saved_cut": recovery})
-    baseline = next(row for row in curve if row["cut"] == saved_cut)
-    best = max(curve, key=lambda r: r["track_f1_global"] if r["track_f1_global"] is not None else -1.)
-    lower = [row for row in curve if row["cut"] < saved_cut]
-    best_lower = max(lower, key=lambda r: r["track_f1_global"] if r["track_f1_global"] is not None else -1.) if lower else None
-    best_ari = max(curve, key=lambda r: r["metrics"]["ari_signal"] if r["metrics"]["ari_signal"] is not None else -1.)
-    best_clean = max(curve, key=lambda r: r["clean_fully_connected_track_fraction"] or -1.)
-    comparisons = {}
-    for row in (best, best_lower, best_ari, best_clean):
-        if row is not None and row["cut"] != saved_cut and str(row["cut"]) not in comparisons:
-            comparisons[str(row["cut"])] = paired_delta_bootstrap(rows[row["cut"]], rows[saved_cut], replicates=args.bootstrap)
-    report = {"events": count, "split": "val", "cohort_sha256": cohort.sha256, "saved_cut": saved_cut,
+    report = {"events": count, "split": "val", "cohort_sha256": cohort.sha256,
               **(evaluation.metadata() if "finding_evaluation" in old else {}),
-              "baseline": baseline, "best_by_f1": best, "best_lower_cut_by_f1": best_lower,
-              "best_by_ari": best_ari, "best_by_clean_connectivity": best_clean,
-              "paired_delta_vs_saved_cut": comparisons, "validation_only": True}
-    if evaluation.mc:
-        # Descriptive validation result only; never replace the saved cut.
-        report["best_by_mc_dice"] = max(curve, key=lambda r: r["metrics"]["mc_track_dice_mean"]
-                                        if r["metrics"]["mc_track_dice_mean"] is not None else -1.)
+              **validation_report(curve, rows, saved_cut, mc=evaluation.mc, replicates=args.bootstrap)}
     for row in selected:
         if file_sha256(parent / f"{row['stage']}_best.pt") != row["checkpoint_sha256"]:
             raise ValueError("Parent checkpoint changed during analysis")
     write_json(output / "threshold_curve.json", curve)
     write_json(output / "summary.json", report)
-    print("GNN_THRESHOLD_SWEEP_COMPLETE " + json.dumps({"saved_cut": saved_cut, "best_f1_cut": best["cut"],
-          "best_ari_cut": best_ari["cut"], "best_clean_connectivity_cut": best_clean["cut"]}), flush=True)
+    print("GNN_THRESHOLD_SWEEP_COMPLETE " + json.dumps({"saved_cut": saved_cut, "best_f1_cut": report["best_by_f1"]["cut"],
+          "best_ari_cut": report["best_by_ari"]["cut"], "best_clean_connectivity_cut": report["best_by_clean_connectivity"]["cut"]}), flush=True)
 
 
 def main():

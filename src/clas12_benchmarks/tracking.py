@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import math
 import os
@@ -29,7 +28,7 @@ from .interaction_network import SegmentClassifier
 from .prepare_cohort import write_json
 from .upstream import ROOT, eggnet, exatrkx_embedding, exatrkx_filter, neighbor_edges
 from .finding_evaluation import (DEFAULT_METRICS, FindingEvaluation, contract, evaluate_events,
-                                 finding_fingerprints, finding_sequence, reference_receipt)
+                                 finding_fingerprints, finding_sequence, load_metrics, reference_receipt)
 
 
 class HitBatch(SimpleNamespace):
@@ -181,11 +180,7 @@ def metric_module(source, output):
             raise ValueError("Existing evaluator snapshot differs; use a fresh output directory")
     else:
         shutil.copyfile(source, path)
-    spec = importlib.util.spec_from_file_location("clas12_shared_track_metrics", path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    return load_metrics(path)
 
 
 def evaluate(events, predictions, metrics, output=None, method=None, cohort_sha=None, settings=None):
@@ -360,11 +355,15 @@ def run(args):
     if (output / "provenance.json").exists() and not args.resume:
         raise FileExistsError("Existing run: use a fresh output or explicit --resume")
     config = json.loads(Path(args.config).read_text())
-    if args.resume and "finding_evaluation" not in config:
+    new_finding = not args.resume
+    if args.resume:
         saved_config = json.loads((output / "provenance.json").read_text())["config"]
-        if "finding_evaluation" in saved_config:
+        # An explicit saved contract identifies the new-run default rules used
+        # originally, even if the recipe supplied only a subset of its fields.
+        new_finding = "finding_evaluation" in saved_config
+        if new_finding and "finding_evaluation" not in config:
             config["finding_evaluation"] = saved_config["finding_evaluation"]
-    validate_recipe(config, new_finding=not args.resume)
+    validate_recipe(config, new_finding=new_finding)
     if args.smoke:
         config.update(steps_per_stage=4, validation_interval=2, checkpoint_validation_events=4)
         if "warmup_steps" in config:

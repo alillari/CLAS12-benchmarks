@@ -32,3 +32,28 @@ def make_finding_publication(root, provenance=True):
             file.create_dataset("clusters/offsets", data=np.arange(count+1, dtype="i8")*9)
     (root / "schema.json").write_text(json.dumps(schema))
     return root
+
+
+def make_legacy_finding_cohort(root, *, coatjava=True):
+    """Materialized v1 cohort, with an optional stored reconstruction reference."""
+    from mmap_ninja import RaggedMmap
+    from clas12_benchmarks.data import Cohort
+    from clas12_benchmarks.prepare_cohort import prepare
+    raw=root/"raw";raw.mkdir()
+    (raw/"metadata.json").write_text("{}")
+    xyz=np.column_stack((np.arange(9)+1,np.ones(9),np.arange(9))).astype("f4")
+    truth=np.array([3]*4+[9]*3+[-1]*2,dtype="i8")
+    for split in ("pretrain","test"):
+        for field,value in (("features",xyz),("seg_target",truth),("coatjava_seg_pred",truth)):
+            RaggedMmap.from_generator(raw/f"{field}_{split}",(value.copy() for _ in range(4)),batch_size=4)
+        (raw/f"samples_{split}.jsonl").write_text("".join(json.dumps(
+            {"source_file":split+".hipo","event":i,"sample_mode":"event"})+"\n" for i in range(4)))
+    with prepare(raw,root/"cohort",train=1,val=1,test=1):
+        pass
+    path=root/"cohort/cohort.json"
+    if not coatjava:
+        spec=json.loads(path.read_text())
+        for dataset in spec["datasets"].values():
+            dataset["extra_targets"]=[]
+        path.write_text(json.dumps(spec))
+    return Cohort(path)

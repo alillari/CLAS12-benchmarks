@@ -19,11 +19,20 @@ class SweepPlotTests(unittest.TestCase):
         self.plot = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.plot)
 
-    def render(self, different_baseline=False):
+    def render(self, different_baseline=False, mc=False):
         keys = ("ari_signal", "track_purity_global", "track_efficiency_global")
+        if mc:
+            keys = ("mc_track_dice_mean", "mc_hit_purity_global", "mc_hit_completeness_global", "track_efficiency_global")
         baseline = {**dict.fromkeys(keys, .9), "n_events": 20}
         arm = {"summary": {"metrics": dict.fromkeys(keys, .8), "coatjava": baseline},
                "bootstrap": {"intervals_95": dict.fromkeys(keys, [.7, .9])}}
+        if mc:
+            from clas12_benchmarks.finding_evaluation import FindingEvaluation, contract
+            arm["summary"].update(FindingEvaluation(settings=contract(new_run=True)).metadata(),
+                                   evaluation_population_sha256="same-physical-events")
+            arm["summary"]["metrics"]["mc_hit_purity_global"]=None
+            arm["bootstrap"]["intervals_95"]["mc_hit_purity_global"]=None
+            baseline["mc_hit_purity_global"]=None
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             report = {"arms": {"100": arm, "1000": arm}}
@@ -46,6 +55,12 @@ class SweepPlotTests(unittest.TestCase):
     def test_different_evaluation_baselines_are_rejected(self):
         with self.assertRaisesRegex(ValueError, "COATJAVA differs"):
             self.render(different_baseline=True)
+
+    def test_mc_panels_render_with_undefined_hit_purity(self):
+        self.render(mc=True)
+        self.assertEqual([axis.get_title() for axis in self.plt.gcf().axes],
+                         ["MC track Dice","MC hit purity (global)","MC hit completeness (global)",
+                          "Accepted-track efficiency"])
 
 
 if __name__ == "__main__":

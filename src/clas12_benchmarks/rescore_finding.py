@@ -76,6 +76,15 @@ def rescore(parent, cohort_path, output, *, metrics_path=DEFAULT_METRICS, settin
     if before["track_finding_metrics.py"] != provenance["metric_sha256"]:
         raise ValueError("Parent evaluator fingerprint mismatch")
     with Cohort(cohort_path) as cohort:
+        if not cohort.is_hdf5:
+            # Materialized v1 cohorts historically hash every nested file, not
+            # only consumed arrays. Creating output here would invalidate the
+            # archived cohort even if no input array were overwritten.
+            root = cohort.path.parent
+            roots = [(Path(spec["root"]) if Path(spec["root"]).is_absolute() else root / spec["root"]).resolve()
+                     for spec, _, _ in cohort.datasets.values()]
+            if all(path == root for path in roots) and output.is_relative_to(root):
+                raise ValueError("Rescoring output must be outside the materialized legacy cohort directory")
         if cohort.sha256 != provenance["cohort_sha256"]:
             raise ValueError("Parent cohort fingerprint mismatch")
         if cohort.data_fingerprints() != provenance["data_array_sha256"]:
@@ -107,11 +116,15 @@ def rescore(parent, cohort_path, output, *, metrics_path=DEFAULT_METRICS, settin
             relabelled += int(np.count_nonzero(raw.labels["seg_target"] != event.labels["seg_target"]))
             metadata = {"identity": event.identity, "finding_evaluation": settings}
             rows.append({**metadata, **evaluation.event_metrics(event, prediction)})
-            baseline.append({**metadata, **evaluation.event_metrics(event, event.labels["coatjava_seg_pred"])})
+            if "coatjava_seg_pred" in event.labels:
+                baseline.append({**metadata, **evaluation.event_metrics(event, event.labels["coatjava_seg_pred"])})
+        if baseline and len(baseline) != len(rows):
+            raise ValueError("COATJAVA must cover the same complete event population")
         summary = {**evaluation.metadata(), "metric_view": "native", "matching": settings["matching"],
                    "evaluation_population_sha256": population.hexdigest(),
                    "metrics": evaluation.summarize(rows), "coatjava": evaluation.summarize(baseline)}
-        summary["model_minus_coatjava"] = evaluation.compare(summary["metrics"], summary["coatjava"])
+        if baseline:
+            summary["model_minus_coatjava"] = evaluation.compare(summary["metrics"], summary["coatjava"])
         verify_evaluation_metadata(summary, evaluation)
         if (parent_receipt(parent) != before or finding_fingerprints(cohort, evaluation) != sidecars or
                 cohort.data_fingerprints() != provenance["data_array_sha256"] or

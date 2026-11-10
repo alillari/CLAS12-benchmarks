@@ -17,12 +17,15 @@ from clas12_benchmarks.hdf5_cohort import prepare
 from clas12_benchmarks.prepare_cohort import write_json
 from clas12_benchmarks.rescore_finding import rescore
 
-from finding_fixture import make_finding_publication
+from finding_fixture import make_finding_publication, make_legacy_finding_cohort
 
 
-def archived_run(root, settings=None):
-    raw=make_finding_publication(root/"raw")
-    cohort=prepare(raw,root/"cohort",1,1,1,42)
+def archived_run(root, settings=None, *, backend="hdf5", coatjava=True):
+    if backend=="hdf5":
+        raw=make_finding_publication(root/"raw")
+        cohort=prepare(raw,root/"cohort",1,1,1,42)
+    else:
+        cohort=make_legacy_finding_cohort(root,coatjava=coatjava)
     parent=root/"parent"; parent.mkdir()
     shutil.copyfile(DEFAULT_METRICS,parent/"track_finding_metrics.py")
     (parent/"embedding_best.pt").write_bytes(b"checkpoint identity; never deserialized by the CPU rescorer")
@@ -154,6 +157,44 @@ class FindingRescoreTests(unittest.TestCase):
         result=subprocess.run([sys.executable,"-c","import sys; import clas12_benchmarks.rescore_finding; assert 'torch' not in sys.modules"],
                               check=True,capture_output=True,text=True,env=env)
         self.assertEqual(result.returncode,0)
+
+    def test_reading_archived_scorer_does_not_create_bytecode_in_parent(self):
+        import os
+        env=os.environ.copy()
+        env.pop("PYTHONDONTWRITEBYTECODE",None)
+        env.pop("PYTHONPYCACHEPREFIX",None)
+        before={str(p.relative_to(self.parent)):file_sha256(p) for p in self.parent.rglob("*") if p.is_file()}
+        subprocess.run([sys.executable,"-m","clas12_benchmarks.rescore_finding",
+            "--run",str(self.parent),"--cohort",str(self.cohort),"--output",str(self.root/"cache-enabled"),
+            "--metrics",str(self.parent/"track_finding_metrics.py")],
+            env=env,check=True,capture_output=True,text=True)
+        after={str(p.relative_to(self.parent)):file_sha256(p) for p in self.parent.rglob("*") if p.is_file()}
+        self.assertEqual(before,after)
+
+    def test_output_cannot_change_a_materialized_legacy_cohort_fingerprint(self):
+        from clas12_benchmarks.data import Cohort
+        root=self.root/"materialized";root.mkdir()
+        parent,path=archived_run(root,backend="ragged_mmap")
+        output=path.parent/"rescored"
+        with Cohort(path) as cohort:
+            before=cohort.data_fingerprints()
+        with self.assertRaisesRegex(ValueError,"cohort"):
+            rescore(parent,path,output)
+        self.assertFalse(output.exists())
+        with Cohort(path) as cohort:
+            self.assertEqual(cohort.data_fingerprints(),before)
+
+    def test_model_only_legacy_results_rescore_without_a_coatjava_reference(self):
+        root=self.root/"model-only";root.mkdir()
+        parent,path=archived_run(root,backend="ragged_mmap",coatjava=False)
+        result=rescore(parent,path,root/"rescored")
+        self.assertEqual(result["metrics"]["mc_track_dice_mean"],1)
+        self.assertEqual(result["coatjava"]["n_events"],0)
+        self.assertNotIn("model_minus_coatjava",result)
+        self.assertEqual((root/"rescored/per_event_coatjava_metrics.jsonl").read_text(),"")
+        subprocess.run([sys.executable,str(Path(__file__).resolve().parents[1]/"scripts/audit_tracking_predictions.py"),
+            "--run",str(parent),"--cohort",str(path),"--output",str(root/"audit.json")],
+            check=True,capture_output=True,text=True)
 
 
 if __name__ == "__main__":

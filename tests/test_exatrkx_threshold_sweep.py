@@ -138,6 +138,36 @@ class ThresholdSweepTests(unittest.TestCase):
         result = paired_delta_bootstrap([row], [row], replicates=16)
         self.assertTrue(all(value == [0., 0.] for value in result["delta_95_intervals"].values()))
 
+    def test_mc_optimum_gets_intervals_when_all_legacy_criteria_prefer_another_cut(self):
+        from clas12_benchmarks.data import Event
+        from clas12_benchmarks.finding_evaluation import FindingEvaluation, contract
+        truth=np.array([0]*4+[1]*4+[-1]*8)
+        event=Event({"source_file":"fixture.hipo","event":0},np.ones((16,3)),np.ones((16,4)),
+                    None,{"seg_target":truth},np.arange(16))
+        evaluation=FindingEvaluation(settings=contract(new_run=True))
+        high=[(0,1),(1,2),(2,3)]
+        middle=[(3,7),(4,5),(5,6),(8,9),(10,11),(12,13),(14,15)]
+        low=[(0,4),(0,8),(0,10),(0,12),(0,14)]
+        curve,rows=[],{}
+        for cut,links in ((.1,high+middle+low),(.5,high+middle),(.9,high)):
+            edges=np.array(links).T
+            graph,_,tracks=graph_diagnostics(truth,edges)
+            prediction=components(16,edges,min_size=2)
+            _,clean,_,_=strict_track_states(truth,prediction,tracks)
+            row={**evaluation.event_metrics(event,prediction),"identity":event.identity,
+                 "finding_evaluation":evaluation.contract}
+            rows[cut]=[{"metrics":row,"graph":graph,"clean_fully_connected_tracks":int(clean.sum())}]
+            summary=evaluation.summarize([row])
+            curve.append({"cut":cut,"metrics":summary,
+                "track_f1_global":2*summary["n_matched_tracks"]/(summary["n_true_tracks"]+summary["n_pred_tracks"]),
+                "clean_fully_connected_track_fraction":float(clean.sum()/2)})
+        result=exatrkx_threshold_sweep.validation_report(curve,rows,.1,mc=True,replicates=16)
+        self.assertEqual(result["best_by_mc_dice"]["cut"],.5)
+        for name in ("best_by_f1","best_by_ari","best_by_clean_connectivity"):
+            self.assertEqual(result[name]["cut"],.9)
+        interval=result["paired_delta_vs_saved_cut"]["0.5"]["delta_95_intervals"]["mc_track_dice_mean"]
+        np.testing.assert_allclose(interval,[55/63-.2]*2)
+
 
 if __name__ == "__main__":
     unittest.main()

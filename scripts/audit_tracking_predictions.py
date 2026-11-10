@@ -1,9 +1,7 @@
 """Recompute shared metrics from every saved point prediction after a run."""
 import argparse
-import importlib.util
 import json
 from pathlib import Path
-import sys
 
 import numpy as np
 
@@ -11,7 +9,7 @@ from clas12_benchmarks.data import Cohort, file_sha256
 from clas12_benchmarks.predictions import prediction_schema
 from clas12_benchmarks.prepare_cohort import write_json
 from clas12_benchmarks.finding_evaluation import (FindingEvaluation, PopulationFingerprint, finding_sequence,
-    finding_fingerprints, verify_evaluation_metadata, verify_reference_provenance)
+    finding_fingerprints, load_metrics, verify_evaluation_metadata, verify_reference_provenance)
 
 
 def require(condition, message):
@@ -35,10 +33,7 @@ def main():
                     "Consumed data fingerprint mismatch")
         metric_path = root / "track_finding_metrics.py"
         require(file_sha256(metric_path) == provenance["metric_sha256"], "Evaluator fingerprint mismatch")
-        spec = importlib.util.spec_from_file_location("frozen_tracking_metric_audit", metric_path)
-        metrics = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = metrics
-        spec.loader.exec_module(metrics)
+        metrics = load_metrics(metric_path)
         evaluation = FindingEvaluation(metrics, provenance.get("finding_evaluation"))
         explicit = "finding_evaluation" in provenance
         if explicit:
@@ -78,7 +73,9 @@ def main():
                 require(cached_rows[i] == {**identity, **row},
                         f"Per-event metrics or identity differ from predictions: event {i}")
                 rows.append(row)
-                baseline.append({**identity, **evaluation.event_metrics(event, event.labels["coatjava_seg_pred"])})
+                if "coatjava_seg_pred" in event.labels:
+                    baseline.append({**identity, **evaluation.event_metrics(event, event.labels["coatjava_seg_pred"])})
+        require(not baseline or len(baseline) == len(rows), "COATJAVA event population mismatch")
         actual = {"metrics": evaluation.summarize(rows), "coatjava": evaluation.summarize(baseline)}
         expected = json.loads((root / "summary.json").read_text())
         if explicit:

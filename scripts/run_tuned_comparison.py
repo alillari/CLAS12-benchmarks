@@ -1,6 +1,5 @@
 """Run one preselected recipe and compare frozen v1 on identical fresh events."""
 import argparse
-import importlib.util
 import json
 from pathlib import Path
 import subprocess
@@ -10,7 +9,7 @@ import numpy as np
 
 from clas12_benchmarks.prepare_cohort import write_json
 from clas12_benchmarks.data import Cohort
-from clas12_benchmarks.finding_evaluation import DEFAULT_METRICS, FindingEvaluation, require_same_contract, require_same_population
+from clas12_benchmarks.finding_evaluation import DEFAULT_METRICS, FindingEvaluation, load_metrics, require_same_contract, require_same_population
 from clas12_benchmarks.finding_statistics import mc_intervals
 from clas12_benchmarks.rescore_finding import rescore
 
@@ -82,10 +81,7 @@ def main():
     for name, root in (("tuned", tuned), ("original_frozen", frozen)):
         run([str(Path(__file__).with_name("audit_tracking_predictions.py")), "--run", str(root),
              "--cohort", args.cohort, "--output", str(output / f"{name}_audit.json")])
-    spec = importlib.util.spec_from_file_location("comparison_frozen_metrics", tuned / "track_finding_metrics.py")
-    metrics = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = metrics
-    spec.loader.exec_module(metrics)
+    metrics = load_metrics(tuned / "track_finding_metrics.py")
     a, b = (json.loads((root / "summary.json").read_text()) for root in (tuned, frozen))
     historical = b
     comparison_frozen = frozen

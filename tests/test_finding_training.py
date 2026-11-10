@@ -102,6 +102,28 @@ class FindingTrainingIntegrationTests(unittest.TestCase):
             run(args)
         self.assertEqual(before,{str(p.relative_to(parent)):file_sha256(p) for p in parent.rglob("*") if p.is_file()})
 
+    def test_partial_contract_resumes_both_pipelines_without_changing_weights(self):
+        spec=importlib.util.spec_from_file_location("finding_resume_checks",ROOT/"scripts/check_hdf5_pipeline.py")
+        checks=importlib.util.module_from_spec(spec);spec.loader.exec_module(checks)
+        recipe=json.loads(self.config.read_text())
+        recipe["finding_evaluation"]={"matching":{"min_purity":.9}}
+        self.config.write_text(json.dumps(recipe))
+        for method in ("eggnet","exatrkx"):
+            with self.subTest(method=method):
+                parent,args=self.train(method)
+                resumed=self.root/(method+"-resumed")
+                with redirect_stdout(StringIO()):
+                    checks.check_resume(method,self.cohort,self.config,DEFAULT_METRICS,parent,resumed)
+                # A real policy change must still be refused after normalization.
+                changed=json.loads(self.config.read_text())
+                changed["finding_evaluation"]["matching"]["min_purity"]=.8
+                path=self.root/(method+"-changed.json");path.write_text(json.dumps(changed))
+                args.resume=True;args.output=str(resumed);args.config=str(path)
+                before={str(p.relative_to(resumed)):file_sha256(p) for p in resumed.rglob("*") if p.is_file()}
+                with self.assertRaisesRegex(ValueError,"Resume provenance mismatch: config"):
+                    run(args)
+                self.assertEqual(before,{str(p.relative_to(resumed)):file_sha256(p) for p in resumed.rglob("*") if p.is_file()})
+
     def test_comparison_cli_rescores_historical_supervision_separately(self):
         import subprocess
         import sys

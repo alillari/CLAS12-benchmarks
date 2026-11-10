@@ -38,6 +38,24 @@ class FindingEvaluationTests(unittest.TestCase):
         self.settings = contract(new_run=True)
         self.evaluation = FindingEvaluation(settings=self.settings)
 
+    def test_scorer_executes_hashed_source_even_when_timestamp_cache_matches(self):
+        import os
+        import py_compile
+        from clas12_benchmarks.finding_evaluation import load_metrics
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/"metrics.py"
+            path.write_text("VALUE = 1\n")
+            stamp=path.stat()
+            cache=Path(py_compile.compile(str(path),doraise=True))
+            before=cache.read_bytes()
+            # Timestamp-based pycs cannot distinguish equal-size edits within
+            # one clock tick. Scientific provenance must follow source bytes.
+            path.write_text("VALUE = 2\n")
+            os.utime(path,ns=(stamp.st_atime_ns,stamp.st_mtime_ns))
+            module=load_metrics(path)
+            self.assertEqual(module.VALUE,2)
+            self.assertEqual(cache.read_bytes(),before)
+
     def test_fixed_full_event_eligibility_and_no_noise_pid_or_prediction_mutation(self):
         truth = [0]+[17]*2+[29]*3+[101]*4+[8]*5+[-1]
         e = event(truth, truth)

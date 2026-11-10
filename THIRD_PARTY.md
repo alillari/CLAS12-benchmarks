@@ -21,3 +21,10 @@ Method references and bibliography are available in each upstream README and the
 [FM4NPP paper](https://arxiv.org/abs/2508.14087). Use method-specific citations when
 reporting benchmark results. This repository is an independent CLAS12 adaptation,
 not an official distribution of the FM4NPP authors' external baseline adaptations.
+
+`src/clas12_benchmarks/fm_reference/` contains unmodified, data-only track-finding
+metrics and eligibility helpers from [alillari/CLAS12](https://github.com/alillari/CLAS12)
+at committed revision `295a4e941dc8102b78df2af2f1099c009681d124`.
+Its `sources.json` records original paths and SHA-256 hashes. No FM model,
+trainer, optimizer study or noise runner is imported. Updating the shared
+scientific definitions requires a deliberate reference update and parity checks.

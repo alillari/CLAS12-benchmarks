@@ -4,7 +4,8 @@ from pathlib import Path
 import numpy as np
 
 
-def save_predictions(path, event, predictions, point_indices, *, method, cohort_sha256):
+def save_predictions(path, event, predictions, point_indices, *, method, cohort_sha256,
+                     finding_evaluation=None):
     predictions, point_indices = np.asarray(predictions), np.asarray(point_indices)
     n = len(event.raw_features)
     if point_indices.shape != (n,) or not np.issubdtype(point_indices.dtype, np.integer):
@@ -17,6 +18,8 @@ def save_predictions(path, event, predictions, point_indices, *, method, cohort_
     path.parent.mkdir(parents=True, exist_ok=True)
     metadata = {"schema": prediction_schema(event.identity), "method": method,
                 "cohort_sha256": cohort_sha256, "identity": event.identity}
+    if finding_evaluation is not None:
+        metadata["finding_evaluation"] = finding_evaluation
     with path.open("xb") as stream:
         np.savez_compressed(stream, predictions=predictions[np.argsort(point_indices)],
                             original_point_index=np.arange(n), metadata=json.dumps(metadata))

@@ -13,6 +13,8 @@ from .interaction_network import SegmentClassifier
 from .prepare_cohort import write_json
 from .tracking import candidates, components, filter_probabilities, graph_scores, metric_module
 from .upstream import exatrkx_embedding, exatrkx_filter
+from .finding_evaluation import FindingEvaluation, finding_fingerprints, finding_sequence
+from .finding_statistics import mc_intervals
 
 
 def strict_track_states(truth, prediction, track_rows):
@@ -73,6 +75,10 @@ def paired_delta_bootstrap(candidate, baseline, seed=1337, replicates=1000):
     for i, key in enumerate(keys):
         finite = draws[:, i][np.isfinite(draws[:, i])]
         intervals[key] = np.percentile(finite, [2.5, 97.5]).tolist() if len(finite) else None
+    if "mc_track_dice_sum" in candidate[0]["metrics"]:
+        extra = mc_intervals([r["metrics"] for r in candidate], [r["metrics"] for r in baseline],
+                             seed=seed, replicates=replicates)
+        intervals.update(extra["intervals_95"])
     return {"unit": "paired event", "seed": seed, "replicates": replicates,
             "delta_95_intervals": intervals,
             "scope": "descriptive validation intervals; conditional on weights; threshold selection and evaluation use the same validation set"}
@@ -99,6 +105,9 @@ def _sweep_cohort(args, parent, output, old, cohort):
     metrics = metric_module(parent / "track_finding_metrics.py", output)
     if file_sha256(output / "track_finding_metrics.py") != old["metric_sha256"]:
         raise ValueError("Evaluator fingerprint mismatch")
+    evaluation = FindingEvaluation(metrics, old.get("finding_evaluation"))
+    if "finding_evaluation" in old and finding_fingerprints(cohort, evaluation) != old.get("finding_data_sha256"):
+        raise ValueError("Finding provenance sidecars changed")
     config = old["config"]["exatrkx"]
     selected = json.loads((parent / "selected_checkpoints.json").read_text())
     validate_selected_stages(selected)
@@ -125,6 +134,7 @@ def _sweep_cohort(args, parent, output, old, cohort):
         count = min(count, args.max_events)
     if not count:
         raise ValueError("No validation events")
+    events = finding_sequence(cohort, "val", evaluation, count)
     write_json(output / "provenance.json", {"parent_run": str(parent), "cohort_sha256": cohort.sha256, "events": count,
         "split": "val", "device": str(device), "torch": torch.__version__, "selected_checkpoints": selected,
         "config": config, "filter_cut": filter_cut, "saved_gnn_cut": saved_cut, "cuts": cuts,
@@ -134,12 +144,13 @@ def _sweep_cohort(args, parent, output, old, cohort):
         "connectivity_definition": "all hits of each true track connected by retained true edges only",
         "clean_connectivity_definition": "fully true-connected track with no other signal-track hit in its reconstructed component; background contamination allowed and reported separately",
         "merge_rate_definition": "frozen evaluator mean over events of fraction of predicted tracks containing hits from multiple true signal tracks",
-        "no_test_evaluation": True, "parent_run_unchanged": True})
+        "no_test_evaluation": True, "parent_run_unchanged": True,
+        **(evaluation.metadata() if "finding_evaluation" in old else {})})
     rows = {cut: [] for cut in cuts}
     cache_edges, cache_scores, offsets, point_counts = [], [], [0], []
     with torch.no_grad(), (output / "per_event.jsonl").open("w") as stream:
         for index in range(count):
-            event = cohort.event("val", index)
+            event = events[index]
             truth = event.labels["seg_target"]
             candidate = candidates(models["embedding"], event, config, device)
             filtered = candidate[:, filter_probabilities(models["filter"], event, candidate, device) >= filter_cut]
@@ -156,7 +167,10 @@ def _sweep_cohort(args, parent, output, old, cohort):
                 prediction = components(len(truth), edges, config["min_component_size"])
                 full, clean, exposed, merged = strict_track_states(truth, prediction, tracks)
                 states[cut] = full, clean, exposed, merged
-                row = {"graph": graph, "metrics": metrics.event_track_metrics(truth, prediction),
+                metric_row = evaluation.event_metrics(event, prediction)
+                if "finding_evaluation" in old:
+                    metric_row.update(identity=event.identity, finding_evaluation=evaluation.contract)
+                row = {"graph": graph, "metrics": metric_row,
                        "clean_fully_connected_tracks": int(clean.sum()), "merge_exposed_true_tracks": int(exposed.sum()),
                        "merged_predicted_tracks": int(merged)}
                 records[cut] = row
@@ -172,7 +186,7 @@ def _sweep_cohort(args, parent, output, old, cohort):
     curve = []
     for cut in cuts:
         records = rows[cut]
-        m = metrics.summarize_event_metrics([r["metrics"] for r in records])
+        m = evaluation.summarize([r["metrics"] for r in records])
         g = aggregate_graphs([r["graph"] for r in records])
         clean = sum(r["clean_fully_connected_tracks"] for r in records)
         recovery = {key: sum(r["recovery_vs_saved_cut"][key] for r in records) for key in records[0]["recovery_vs_saved_cut"]}
@@ -193,9 +207,14 @@ def _sweep_cohort(args, parent, output, old, cohort):
         if row is not None and row["cut"] != saved_cut and str(row["cut"]) not in comparisons:
             comparisons[str(row["cut"])] = paired_delta_bootstrap(rows[row["cut"]], rows[saved_cut], replicates=args.bootstrap)
     report = {"events": count, "split": "val", "cohort_sha256": cohort.sha256, "saved_cut": saved_cut,
+              **(evaluation.metadata() if "finding_evaluation" in old else {}),
               "baseline": baseline, "best_by_f1": best, "best_lower_cut_by_f1": best_lower,
               "best_by_ari": best_ari, "best_by_clean_connectivity": best_clean,
               "paired_delta_vs_saved_cut": comparisons, "validation_only": True}
+    if evaluation.mc:
+        # Descriptive validation result only; never replace the saved cut.
+        report["best_by_mc_dice"] = max(curve, key=lambda r: r["metrics"]["mc_track_dice_mean"]
+                                        if r["metrics"]["mc_track_dice_mean"] is not None else -1.)
     for row in selected:
         if file_sha256(parent / f"{row['stage']}_best.pt") != row["checkpoint_sha256"]:
             raise ValueError("Parent checkpoint changed during analysis")

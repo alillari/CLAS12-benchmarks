@@ -10,6 +10,8 @@ import numpy as np
 from clas12_benchmarks.data import Cohort, file_sha256
 from clas12_benchmarks.predictions import prediction_schema
 from clas12_benchmarks.prepare_cohort import write_json
+from clas12_benchmarks.finding_evaluation import (FindingEvaluation, PopulationFingerprint, finding_sequence,
+    finding_fingerprints, verify_evaluation_metadata, verify_reference_provenance)
 
 
 def require(condition, message):
@@ -26,6 +28,7 @@ def main():
     root = Path(args.run)
     with Cohort(args.cohort) as cohort:
         provenance = json.loads((root / "provenance.json").read_text())
+        verify_reference_provenance(provenance)
         require(provenance["cohort_sha256"] == cohort.sha256, "Cohort fingerprint mismatch")
         if "data_array_sha256" in provenance:
             require(cohort.data_fingerprints() == provenance["data_array_sha256"],
@@ -36,6 +39,15 @@ def main():
         metrics = importlib.util.module_from_spec(spec)
         sys.modules[spec.name] = metrics
         spec.loader.exec_module(metrics)
+        evaluation = FindingEvaluation(metrics, provenance.get("finding_evaluation"))
+        explicit = "finding_evaluation" in provenance
+        if explicit:
+            require(provenance["config"]["finding_evaluation"] == evaluation.contract,
+                    "Training/evaluation contract mismatch")
+            require(provenance.get("finding_data_sha256") == finding_fingerprints(cohort, evaluation),
+                    "Consumed finding provenance fingerprint mismatch")
+        events = finding_sequence(cohort, "test", evaluation)
+        population = PopulationFingerprint()
         paths = sorted((root / "predictions").glob("*.npz"))
         require(len(paths) == len(cohort.roles["test"]), "Prediction event count mismatch")
         with (root / "per_event_metrics.jsonl").open() as stream:
@@ -44,30 +56,49 @@ def main():
         rows, baseline = [], []
         for i, path in enumerate(paths):
             require(path.name == f"event_{i:06d}.npz", "Prediction filename/order mismatch")
-            event = cohort.event("test", i)
+            event = events[i]
+            if explicit:
+                population.add(event, evaluation)
             with np.load(path, allow_pickle=False) as saved:
                 metadata = json.loads(str(saved["metadata"]))
                 require(metadata["schema"] == prediction_schema(event.identity), "Prediction schema mismatch")
                 require(metadata["cohort_sha256"] == cohort.sha256, "Prediction cohort mismatch")
                 require(metadata["identity"] == event.identity, "Prediction event identity mismatch")
                 require(metadata["method"] == provenance["method"], "Prediction method mismatch")
+                if explicit:
+                    require(metadata.get("finding_evaluation") == evaluation.contract, "Prediction evaluation contract mismatch")
                 prediction = saved["predictions"]
                 require(prediction.shape == (len(event.positions),), "Prediction point count mismatch")
                 require(np.issubdtype(prediction.dtype, np.integer), "Prediction labels must be integers")
                 np.testing.assert_array_equal(saved["original_point_index"], event.original_point_index)
-                row = metrics.event_track_metrics(event.labels["seg_target"], prediction)
-                require(cached_rows[i] == {"identity": event.identity, **row},
+                row = evaluation.event_metrics(event, prediction)
+                identity = {"identity": event.identity}
+                if explicit:
+                    identity["finding_evaluation"] = evaluation.contract
+                require(cached_rows[i] == {**identity, **row},
                         f"Per-event metrics or identity differ from predictions: event {i}")
                 rows.append(row)
-                baseline.append(metrics.event_track_metrics(event.labels["seg_target"], event.labels["coatjava_seg_pred"]))
-        actual = {"metrics": metrics.summarize_event_metrics(rows), "coatjava": metrics.summarize_event_metrics(baseline)}
+                baseline.append({**identity, **evaluation.event_metrics(event, event.labels["coatjava_seg_pred"])})
+        actual = {"metrics": evaluation.summarize(rows), "coatjava": evaluation.summarize(baseline)}
         expected = json.loads((root / "summary.json").read_text())
+        if explicit:
+            verify_evaluation_metadata(expected, evaluation)
+            require(expected.get("evaluation_population_sha256") == population.hexdigest(), "Evaluation population fingerprint mismatch")
+            with (root / "per_event_coatjava_metrics.jsonl").open() as stream:
+                require([json.loads(line) for line in stream] == baseline, "COATJAVA per-event cache mismatch")
+        def compare(value, expected_value, label):
+            if isinstance(value, dict):
+                require(isinstance(expected_value, dict) and value.keys() == expected_value.keys(),
+                        f"Summary metric keys mismatch: {label}")
+                for key in value:
+                    compare(value[key], expected_value[key], f"{label}/{key}")
+            elif value is None or isinstance(value, (str, list)):
+                require(value == expected_value, f"Undefined summary metric mismatch: {label}")
+            else:
+                np.testing.assert_allclose(value, expected_value, rtol=0, atol=1e-12)
         for group, values in actual.items():
             for key, value in values.items():
-                if value is None:
-                    require(expected[group][key] is None, f"Undefined summary metric mismatch: {group}/{key}")
-                else:
-                    np.testing.assert_allclose(value, expected[group][key], rtol=0, atol=1e-12)
+                compare(value, expected[group][key], f"{group}/{key}")
         checkpoints = json.loads((root / "selected_checkpoints.json").read_text())
         for stage in checkpoints:
             require(file_sha256(root / f"{stage['stage']}_best.pt") == stage["checkpoint_sha256"],

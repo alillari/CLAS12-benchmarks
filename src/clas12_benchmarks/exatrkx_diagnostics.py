@@ -16,6 +16,7 @@ from .prepare_cohort import write_json
 from .tracking import (candidates, components, filter_probabilities, graph_scores,
                        metric_module)
 from .upstream import ROOT, exatrkx_embedding, exatrkx_filter, neighbor_edges
+from .finding_evaluation import FindingEvaluation, finding_fingerprints, finding_sequence, verify_reference_provenance
 
 
 def ratio(a, b):
@@ -121,6 +122,7 @@ def validate_selected_stages(selected):
 
 def validate_frozen_sources(provenance, *, hdf5=False):
     """Verify model forwards, graph construction and the active input reader."""
+    verify_reference_provenance(provenance)
     paths = ["vendor/exatrkx/exatrkx/src/embedding/layerless_embedding.py",
              "vendor/exatrkx/exatrkx/src/filter/vanilla_filter.py",
              "src/clas12_benchmarks/interaction_network.py",
@@ -129,6 +131,10 @@ def validate_frozen_sources(provenance, *, hdf5=False):
              "src/clas12_benchmarks/sequences.py",
              "src/clas12_benchmarks/hdf5.py" if hdf5 else "src/clas12_benchmarks/sources.py"]
     saved = provenance["source_sha256"]
+    if "finding_evaluation" in provenance:
+        paths.extend(["src/clas12_benchmarks/finding_evaluation.py",
+                      "src/clas12_benchmarks/fm_reference/track_finding_metrics.py",
+                      "src/clas12_benchmarks/fm_reference/track_eligibility.py"])
     for path in paths:
         if file_sha256(ROOT / path) != saved.get(path):
             raise ValueError(f"Frozen model/input source changed or missing: {path}")
@@ -155,6 +161,9 @@ def _analyze_cohort(args, output, parent, provenance, cohort):
     metrics = metric_module(parent / "track_finding_metrics.py", output)
     if file_sha256(output / "track_finding_metrics.py") != provenance["metric_sha256"]:
         raise ValueError("Evaluator fingerprint mismatch")
+    evaluation = FindingEvaluation(metrics, provenance.get("finding_evaluation"))
+    if "finding_evaluation" in provenance and finding_fingerprints(cohort, evaluation) != provenance.get("finding_data_sha256"):
+        raise ValueError("Finding provenance sidecars changed")
     config = provenance["config"]["exatrkx"]
     selected = json.loads((parent / "selected_checkpoints.json").read_text())
     validate_selected_stages(selected)
@@ -181,6 +190,7 @@ def _analyze_cohort(args, output, parent, provenance, cohort):
         count = min(count, args.max_events)
     if not count:
         raise ValueError("No events selected")
+    events = finding_sequence(cohort, args.split, evaluation, count)
     write_json(output / "provenance.json", {"parent_run": str(parent), "cohort_sha256": cohort.sha256,
         "split": args.split, "events": count, "selection": "first events in frozen cohort order; all by default",
         "device": str(device), "torch": torch.__version__, "selected_checkpoints": selected,
@@ -191,7 +201,8 @@ def _analyze_cohort(args, output, parent, provenance, cohort):
         "oracle_policy": "remove every false/background edge; connected components; reject components smaller than the saved minimum; never join disconnected components",
         "connectivity_policy": "fully connected induced true-track subgraph; no paths via other tracks/noise; singleton tracks connected trivially",
         "candidate_policy": "union of directed k-nearest proposals with Euclidean radius <= cutoff, deduplicated as undirected pairs",
-        "distance_weighting": "unordered pairs pooled over events; track span and MST radii pooled with one entry per true track"})
+        "distance_weighting": "unordered pairs pooled over events; track span and MST radii pooled with one entry per true track",
+        **(evaluation.metadata() if "finding_evaluation" in provenance else {})})
     stages = ("candidate", "after_filter", "after_gnn")
     graphs = {stage: [] for stage in stages}
     oracle_rows = {stage: [] for stage in stages}
@@ -203,7 +214,7 @@ def _analyze_cohort(args, output, parent, provenance, cohort):
     losses = {"fully_connected_tracks_lost_at_filter": 0, "fully_connected_tracks_lost_at_gnn": 0}
     with (output / "per_event.jsonl").open("w") as events_file, (output / "per_track.jsonl").open("w") as tracks_file, torch.no_grad():
         for index in range(count):
-            event = cohort.event(args.split, index)
+            event = events[index]
             truth = event.labels["seg_target"]
             z = models["embedding"](torch.as_tensor(event.positions, device=device))
             if not torch.isfinite(z).all():
@@ -238,7 +249,7 @@ def _analyze_cohort(args, output, parent, provenance, cohort):
             for stage, edge in zip(stages, (candidate, filtered, classified)):
                 row, oracle, per_track = graph_diagnostics(truth, edge.numpy(), config["min_component_size"])
                 graphs[stage].append(row)
-                oracle_metrics = metrics.event_track_metrics(truth, oracle)
+                oracle_metrics = evaluation.event_metrics(event, oracle)
                 oracle_rows[stage].append(oracle_metrics)
                 event_rows[stage] = {"graph": row, "oracle": oracle_metrics}
                 track_rows[stage] = per_track
@@ -255,7 +266,7 @@ def _analyze_cohort(args, output, parent, provenance, cohort):
                 tracks_file.write(json.dumps({"event": event.identity, "truth_id": c["truth_id"], "hits": c["hits"],
                     "by_stage": {stage: track_rows[stage][i] for stage in stages}}, allow_nan=False) + "\n")
             actual = components(len(truth), classified.numpy(), config["min_component_size"])
-            row = metrics.event_track_metrics(truth, actual)
+            row = evaluation.event_metrics(event, actual)
             actual_rows.append(row)
             events_file.write(json.dumps({"identity": event.identity, "stages": event_rows, "actual_gnn": row}, allow_nan=False) + "\n")
             if (index + 1) % 250 == 0:
@@ -264,9 +275,10 @@ def _analyze_cohort(args, output, parent, provenance, cohort):
                    for radius, rows in zip(args.radii, radius_rows)]
     k_scan = [{"k": k, "radius": config["candidate_radius"], **aggregate_graphs(rows)} for k, rows in zip(args.ks, k_rows)]
     stage_summary = {stage: {"graph": aggregate_graphs(graphs[stage]),
-                            "oracle": metrics.summarize_event_metrics(oracle_rows[stage])} for stage in stages}
+                            "oracle": evaluation.summarize(oracle_rows[stage])} for stage in stages}
     summary = {"events": count, "split": args.split, "cohort_sha256": cohort.sha256,
-               "stages": stage_summary, "actual_gnn": metrics.summarize_event_metrics(actual_rows),
+               "stages": stage_summary, "actual_gnn": evaluation.summarize(actual_rows),
+               **(evaluation.metadata() if "finding_evaluation" in provenance else {}),
                "connectivity_losses": {k: int(v) for k, v in losses.items()},
                "filter_true_edge_recall_given_candidates": ratio(stage_summary["after_filter"]["graph"]["true_edges"], stage_summary["candidate"]["graph"]["true_edges"]),
                "gnn_true_edge_recall_given_filter": ratio(stage_summary["after_gnn"]["graph"]["true_edges"], stage_summary["after_filter"]["graph"]["true_edges"])}

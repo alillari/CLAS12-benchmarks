@@ -88,8 +88,12 @@ def main():
     for suffix in ("png", "svg"):
         fig.savefig(output / f"embedding_and_candidates.{suffix}", dpi=180)
     plt.close(fig)
-    fig, axes = plt.subplots(1, 3, figsize=(12, 4), constrained_layout=True)
     columns = (("ari_signal", "Signal ARI"), ("track_purity_global", "Track purity"), ("track_efficiency_global", "Track efficiency"))
+    if "mc_track_dice_mean" in summary["actual_gnn"]:
+        columns = (("mc_track_dice_mean", "MC track Dice"), ("mc_hit_purity_global", "MC hit purity"),
+                   ("mc_hit_completeness_global", "MC hit completeness"),
+                   ("track_efficiency_global", "Accepted-track efficiency"))
+    fig, axes = plt.subplots(1, len(columns), figsize=(4*len(columns), 4), constrained_layout=True)
     labels = ("Candidate\noracle", "After-filter\noracle", "After-GNN\noracle", "Actual GNN\nreconstruction")
     for ax, (key, title) in zip(axes, columns):
         values = np.array([summary["stages"][s]["oracle"][key] for s in stages] + [summary["actual_gnn"][key]], dtype=float)

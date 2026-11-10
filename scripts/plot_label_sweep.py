@@ -5,6 +5,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+from clas12_benchmarks.finding_evaluation import require_same_population
 
 
 def main():
@@ -19,18 +20,27 @@ def main():
     if not budgets_all or min(budgets_all) < 1 or any(not report["arms"] for _, _, report in reports):
         raise ValueError("Both reports must contain positive training budgets")
     baseline = reports[0][2]["arms"][str(min(map(int, reports[0][2]["arms"])))]["summary"]["coatjava"]
+    first = next(iter(reports[0][2]["arms"].values()))["summary"]
+    for _, _, report in reports:
+        for arm in report["arms"].values():
+            require_same_population(first, arm["summary"])
     if any(arm["summary"]["coatjava"] != baseline
            for _, _, report in reports for arm in report["arms"].values()):
         raise ValueError("Evaluation population/COATJAVA differs between plotted arms")
     panels = [("ari_signal", "Signal ARI"),
               ("track_purity_global", "Track purity (global)"),
               ("track_efficiency_global", "Track efficiency (global)")]
-    fig, axes = plt.subplots(1, 3, figsize=(12.5, 4.3), sharex=True)
+    if "mc_track_dice_mean" in first["metrics"]:
+        panels = [("mc_track_dice_mean", "MC track Dice"),
+                  ("mc_hit_purity_global", "MC hit purity (global)"),
+                  ("mc_hit_completeness_global", "MC hit completeness (global)"),
+                  ("track_efficiency_global", "Accepted-track efficiency")]
+    fig, axes = plt.subplots(1, len(panels), figsize=(4.2*len(panels), 4.3), sharex=True)
     for label, color, report in reports:
         budgets = sorted(map(int, report["arms"]))
         for ax, (key, title) in zip(axes, panels):
             rows = [report["arms"][str(n)] for n in budgets]
-            y = [r["summary"]["metrics"][key] for r in rows]
+            y = [r["summary"]["metrics"][key] if r["summary"]["metrics"][key] is not None else np.nan for r in rows]
             bounds = np.array([r["bootstrap"]["intervals_95"][key] or [np.nan, np.nan] for r in rows])
             ax.plot(budgets, y, "o-", label=label, color=color, linewidth=2)
             ax.fill_between(budgets, bounds[:, 0], bounds[:, 1], color=color, alpha=.18)

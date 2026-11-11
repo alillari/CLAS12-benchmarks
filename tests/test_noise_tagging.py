@@ -101,6 +101,8 @@ class NoiseTaggingTests(unittest.TestCase):
                     self.assertEqual(result["selected_checkpoint_step"], best["step"])
                     self.assertEqual(result["selected_validation_loss"], best["validation_loss"])
                     self.assertEqual(result["data_contract"]["noise_policy"], MIN4_NOISE_POLICY)
+                    self.assertEqual(set(result["fm_reference"]["files"]),
+                                     {"noise_metrics.py", "track_eligibility.py"})
                     self.assertEqual(result["training_class_counts"], [8, 10])
                     self.assertEqual(result["train_samples"], 3)
                     self.assertEqual(result["provenance_sha256"], file_sha256(output / "provenance.json"))

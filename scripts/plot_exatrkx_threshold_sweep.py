@@ -24,6 +24,8 @@ def main():
     fig, axes = plt.subplots(2, 2, figsize=(12, 8), constrained_layout=True)
     ax = axes[0, 0]
     ax.plot(x, [r["track_f1_global"] for r in curve], label="Track F1", color="#2463a6")
+    if "mc_track_dice_mean" in curve[0]["metrics"]:
+        ax.plot(x, [r["metrics"]["mc_track_dice_mean"] for r in curve], label="MC track Dice", color="#765594")
     for key, label, color in (("track_purity_global", "Track purity", "#db8535"),
                               ("track_efficiency_global", "Track efficiency", "#31856a")):
         ax.plot(x, [r["metrics"][key] for r in curve], label=label, color=color)

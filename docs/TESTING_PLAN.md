@@ -1,5 +1,19 @@
 # Legacy and cluster HDF5 testing plan
 
+The track-finding evaluation update is covered by `test_finding_evaluation.py`,
+`test_finding_rescore.py`, `test_finding_cohort.py` and `test_finding_training.py`.
+These add committed-FM differential checks (including its offline rescorer),
+independent metric/eligibility examples, unchanged-archive checks, exact FM cohort
+import, both native tracking pipelines, and separate common-policy rescoring of
+historical models. See [the evaluation protocol](TRACKING.md#fm-track-finding-evaluation).
+CI also runs the saved-assignment rescorer guards under `python -O`.
+Review regression cases additionally cover partial evaluation settings across
+interruption/resume, stale timestamp-matching scorer bytecode, archive loading
+with bytecode writes enabled, model-only legacy runs, and destinations that would
+change a materialized cohort's historical fingerprint.
+The threshold-reporting regression includes a Dice-optimal cut distinct from
+every legacy optimum and verifies its paired event-bootstrap interval.
+
 Protect every implemented benchmark workflow while adding the cluster HDF5
 support described in [the implementation plan](DATA_FORMAT_PLAN.md). Acceptance
 requires correct identities, inputs, targets, training behavior, predictions,

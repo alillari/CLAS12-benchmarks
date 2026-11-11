@@ -10,6 +10,8 @@ import numpy as np
 
 from clas12_benchmarks.data import Cohort, file_sha256
 from clas12_benchmarks.prepare_cohort import write_json
+from clas12_benchmarks.finding_evaluation import DEFAULT_METRICS, require_same_population
+from clas12_benchmarks.finding_statistics import mc_intervals
 
 
 def bootstrap_metrics(path, seed=1337, replicates=1000):
@@ -35,6 +37,10 @@ def bootstrap_metrics(path, seed=1337, replicates=1000):
         finite = samples[:, i][np.isfinite(samples[:, i])]
         intervals[key] = np.percentile(finite, [2.5, 97.5]).tolist() if len(finite) else None
         defined[key] = len(finite)
+    if rows and "mc_track_dice_sum" in rows[0]:
+        extra = mc_intervals(rows, seed=seed, replicates=replicates)
+        intervals.update(extra["intervals_95"])
+        defined.update(extra["defined_resamples"])
     return {"unit": "event", "replicates": replicates, "seed": seed,
         "intervals_95": intervals, "defined_resamples": defined}
 
@@ -58,7 +64,7 @@ def main():
     p.add_argument("--method", choices=("eggnet", "exatrkx"), required=True)
     p.add_argument("--cohorts", default="/cohorts")
     p.add_argument("--config", default=str(Path(__file__).resolve().parents[1] / "configs/label_budget_sweep.json"))
-    p.add_argument("--metrics", default="/clas12-metrics/track_finding_metrics.py")
+    p.add_argument("--metrics", default=str(DEFAULT_METRICS))
     p.add_argument("--device", default="cuda")
     p.add_argument("--output", default="/results")
     p.add_argument("--budgets", nargs="+", type=int, default=[100, 1000, 10000, 100000])
@@ -72,6 +78,7 @@ def main():
         "config_sha256": file_sha256(args.config), "label_budget_unit": "fully labeled training events",
         "validation_labels_excluded_from_training_budget": True, "arms": {}}
     baseline = None
+    previous_summary = None
     for budget in args.budgets:
         arm = output / f"labels_{budget}"
         arm.mkdir()
@@ -88,6 +95,9 @@ def main():
         subprocess.run([sys.executable, "-u", str(Path(__file__).with_name("audit_tracking_predictions.py")),
             "--run", str(arm / "run"), "--cohort", str(manifest), "--output", str(arm / "audit.json")], check=True)
         summary = json.loads((arm / "run/summary.json").read_text())
+        if previous_summary is not None:
+            require_same_population(previous_summary, summary)
+        previous_summary = summary
         if baseline is not None and summary["coatjava"] != baseline:
             raise ValueError("Evaluation population/COATJAVA changed across label budgets")
         baseline = summary["coatjava"]
@@ -97,7 +107,8 @@ def main():
         metrics = summary["metrics"]
         report["arms"][str(budget)] = {"training_events": budget,
             "cohort_sha256": file_sha256(manifest), "summary": summary,
-            "track_f1_global": 2 * metrics["n_matched_tracks"] / (metrics["n_true_tracks"] + metrics["n_pred_tracks"]),
+            "track_f1_global": (2 * metrics["n_matched_tracks"] / (metrics["n_true_tracks"] + metrics["n_pred_tracks"])
+                                if metrics["n_true_tracks"] + metrics["n_pred_tracks"] else None),
             "selected_checkpoints": selected,
             "selection": json.loads((arm / "run/frozen_selection.json").read_text()),
             "bootstrap": bootstrap_metrics(arm / "run/per_event_metrics.jsonl"),

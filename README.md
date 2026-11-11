@@ -60,6 +60,10 @@ It does not install the three upstream applications. Each has its own dependenci
 use separate environments for those. Original requirement files are preserved in
 `vendor/`. The standalone tracking runner uses the `tracking` extra and native
 Torch graph operations; it runs without those full application environments.
+Track finding includes a CPU-only saved-assignment rescorer and a pinned copy of
+the committed FM metric/eligibility helpers. New tracking runs use the shared
+four-cluster truth policy and report MC reconstruction Dice alongside accepted
+track metrics. See [evaluation alignment](docs/TRACKING.md#fm-track-finding-evaluation).
 The tracking usage guide describes the optional TensorFlow/Sonnet port-parity check.
 
 ## Use CLAS12 data
@@ -123,8 +127,8 @@ cohort fingerprint, seed, selection rule and checkpoint hash.
 `predictions.save_predictions` checks a complete one-to-one point mapping and
 restores original order. Its versioned output is a new interchange format; the
 standalone tracking runner evaluates predictions through the shared CLAS12 metric
-module before saving them. The original CLAS12 evaluation CLI still needs a reader
-for saved interchange files. Do not compare upstream native
+module before saving them. `python -m clas12_benchmarks.rescore_finding` reads
+these files directly without inference or checkpoint changes. Do not compare upstream native
 scores directly to CLAS12 scores: matching, background and cohort definitions must
 be shared. The canonical data identity uses source filename plus event number;
 datasets must use consistent original event numbering and source-file naming.

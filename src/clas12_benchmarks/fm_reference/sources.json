@@ -2,6 +2,10 @@
   "repository": "https://github.com/alillari/CLAS12",
   "commit": "295a4e941dc8102b78df2af2f1099c009681d124",
   "files": {
+    "track_finding_metrics.py": {
+      "source_path": "train/downstream/track_finding_metrics.py",
+      "sha256": "b130fa5851fdb7c3f22e062dda28dec6bcf06c971e4cdbbca596a291ed1c31c8"
+    },
     "track_eligibility.py": {
       "source_path": "fm4npp/datasets/track_eligibility.py",
       "sha256": "50513f634a887801e02db1da843189f19a1537f228c5914a76075a6384255ca8"

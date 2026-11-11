@@ -371,3 +371,152 @@ adaptations. The pinned embedding code defines LayerNorm but leaves it unused,
 whereas the Exa.TrkX paper describes LayerNorm. The pinned filter width is also
 a source configuration rather than an assertion of exact publication settings.
 Keep numerical verification output externally with the run provenance.
+
+## FM track-finding evaluation
+
+New tracking runs resolve the following setting and save it with provenance:
+
+```json
+{
+  "finding_evaluation": {
+    "profile": "mc_reconstruction_v1",
+    "truth_policy": "primary_mc_min4_v1",
+    "matching": {
+      "background_label": -1,
+      "iou_threshold": 0.5,
+      "min_purity": 0.5,
+      "min_efficiency": 0.5
+    }
+  }
+}
+```
+
+`--metrics` is now optional. The default is the bundled, unmodified FM reference
+at committed revision `295a4e941dc8102b78df2af2f1099c009681d124`, with source paths
+and hashes in `fm_reference/sources.json`. An explicit `--metrics` snapshots
+another scorer; the MC profile requires its versioned reconstruction API. No FM
+model/trainer or uncommitted optimizer/Dice study is imported.
+
+The finding-only view counts owned clusters in each complete event. Segments
+with fewer than four become non-target (`-1`); exactly four remain eligible.
+It preserves every cluster, original point identity, COATJAVA prediction and
+physical provenance. This view supplies **training, validation and test** finding
+targets for both HDF5 and ragged data. Raw cohort files, generic readers,
+momentum/PID targets, noise targets and noise execution paths retain their
+existing behavior. Corrected finding targets change supervision; a newly trained
+run is not a continuation under the old label policy.
+
+The MC profile augments the historical accepted matcher with independent
+one-to-one Dice association. `mc_track_dice_mean` divides the sum of associated
+Dice scores by **all eligible truth tracks**, assigning zero to misses. It gives
+equal weight to tracks, rather than events or clusters. Separate non-target
+predictions do not reduce primary Dice; non-target clusters inside associated
+predictions do. `mc_hit_completeness_global` and `mc_hit_purity_global` pool cluster
+counts using those Dice associations. The derived `mc_hit_f1_global` pools the
+same hit counts and is generally different from mean track Dice.
+
+`track_efficiency_global` continues to use the independent accepted matcher.
+Each pair must pass the recorded purity, completeness and IoU cuts (all 0.5 by
+default). Raising cuts reruns accepted matching and does not alter Dice
+association. Accepted-track F1, MC hit F1 and mean track Dice have distinct
+definitions. Historical unsuffixed diagnostics remain event means; new global
+ratios pool counts. Undefined ratios are JSON `null`.
+
+HDF5 provenance joins consume `background_only`, `ownership`, `origin_noise` and
+`purity` where available. Only verified pure-overlay clusters enter overlay
+contamination/leakage numerators. Excluded MC is not overlay. Missing provenance
+remains unknown, with coverage and lower bounds supplied by the FM scorer.
+Additional sidecar fingerprints are recorded separately so existing cohort
+content hashes retain their historical interpretation.
+
+Summary metadata records `finding_metrics_version: 2`, the effective
+`track_eligibility_contract`, the MC profile, accepted-match cuts and a hash of
+evaluated physical events/cluster membership, truth, COATJAVA and provenance.
+This evaluation policy is separate from a checkpoint's historical training
+policy. Audits, frozen evaluations, graph diagnostics and threshold sweeps use
+the saved contract; comparisons reject different protocols, scorer/eligibility
+source fingerprints, or populations.
+New runs also export `per_event_coatjava_metrics.jsonl` on the same support.
+Label-sweep plots display MC Dice, hit purity/completeness and accepted-track
+efficiency. Bootstrap intervals resample events and recompute pooled counts.
+
+Checkpoint and inference-cut **selection rules are not changed to Dice**.
+Tracking-score recipes still select EggNet/GNN checkpoints and final clustering/
+GNN cuts by validation accepted-track F1; embedding/filter stages retain their
+declared loss/edge criteria. Provenance records these choices. The standard FM
+trainer's ARI selection is a separate training-protocol difference to report.
+Test labels do not select weights or cuts. To reproduce historical supervision
+in a fresh run, set `finding_evaluation` explicitly to
+`{"profile": "legacy", "truth_policy": "as_saved"}`. Existing saved provenance
+without this setting retains its historical interpretation.
+
+### Rescore existing assignments without retraining
+
+```bash
+python -m clas12_benchmarks.rescore_finding \
+  --run /absolute/path/archived/eggnet \
+  --cohort /absolute/path/archived/cohort/cohort.json \
+  --output /absolute/path/new_evaluations/eggnet_mc_min4
+```
+
+This CPU-only command validates original cohort/data, prediction event/point
+identities, evaluator and checkpoint hashes. It does not import Torch, deserialize
+weights, infer predictions or recalibrate thresholds. The output must be a new
+directory outside the archived run. It writes new summaries, per-event model and
+COATJAVA scores, scorer/eligibility snapshots, and a receipt with parent/prediction hashes, scorer identity,
+truth policy, relabelled-cluster count and provenance fingerprints. Original
+results are never overwritten; failed attempts do not publish a summary and
+require a fresh output path.
+For materialized legacy cohorts, output must also be outside the cohort directory:
+its historical fingerprint includes every nested file. A model-only legacy run
+can be rescored without COATJAVA; its reference event list is empty and no
+model-minus-reference comparison is emitted.
+Scorer snapshots are compiled directly from their hashed source bytes. Existing
+bytecode caches are ignored, and loading an archived scorer does not create new
+cache files inside that archive.
+For a scoring-only installation use `python -m pip install -e '.[evaluation,hdf5]'`;
+Torch and graph packages are unnecessary for this command.
+
+Use `--truth-policy as_saved` for explicitly labelled historical-denominator
+rescoring. Use `--min-purity`, `--min-efficiency` and `--iou-threshold` to specify
+another reconstruction-quality requirement. Rescoring an old checkpoint under
+new truth does not claim it was trained using the corrected supervision.
+
+`evaluate_frozen` retains the parent's original scorer and contract. The tuned
+comparison runner audits that historical evaluation, then writes a separate
+`original_rescored/` evaluation using the tuned run's common scorer/contract
+before comparing. Keep old runs on their matching source snapshot for resume or
+strict frozen diagnostics; source checks are not bypassed for migration.
+
+### Match the FM event population exactly
+
+Counts, seeds or dataset paths alone do not establish equivalent populations.
+Import the FM workflow's complete `cohorts.json` (`train`, `validation`, `test`)
+instead of drawing another random cohort:
+
+```bash
+python -m clas12_benchmarks.prepare_finding_cohort \
+  --data-root /absolute/path/cvt_cluster_hdf5 \
+  --fm-cohorts /absolute/path/fm_run/cohorts.json \
+  --plan-id EXPECTED_PLAN_ID_FROM_FM_DATA_CONTRACT \
+  --output /absolute/path/new_cohorts/fm_finding
+```
+
+Rows must identify whole events with `source_event_index`, `source_id` and
+`original_ordinal`. The importer checks the explicit publication plan and physical
+identities, preserves order and membership exactly, rejects duplicates/segment
+samples, and fits normalization on the imported training coordinates only. It
+records eligible-track/cluster counts without changing raw shards. Check that
+the plan and source publication match the FM report being compared.
+
+### Parity and regression checks
+
+`test_finding_evaluation.py` covers independently expected split/merge/miss,
+short-track, contamination, quality-cut, aggregation and unknown-provenance
+cases. When a sibling FM checkout is available (or `CLAS12_FM_ROOT` is set), it
+also loads **committed Git objects**, verifies the reference hashes and compares
+event/global outputs and the FM offline rescorer directly. It ignores that
+checkout's working tree. Rescoring tests verify archive preservation and reject
+identity/checkpoint corruption. Both tracking models receive bounded CPU
+train/reload/audit/diagnostic integration checks. Bootstrap tests verify pooled
+counts rather than averages of per-event Dice or hit ratios.

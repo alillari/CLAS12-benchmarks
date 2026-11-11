@@ -67,8 +67,8 @@ def main():
     root = args.data
     if root is None:
         sys.path.insert(0, str(ROOT / "tests"))
-        from hdf5_fixture import make_publication
-        root = make_publication(args.output / "fixture")
+        from finding_fixture import make_finding_publication
+        root = make_finding_publication(args.output / "fixture")
     counts = (16, 8, 8) if args.data else (3, 2, 2)
     def run(name, argv):
         with (args.output / f"{name}.log").open("w") as log:
@@ -132,8 +132,8 @@ def main():
         after = json.loads((frozen / "summary.json").read_text())
         for group in ("metrics", "coatjava"):
             for key, value in before[group].items():
-                if value is None:
-                    if after[group][key] is not None:
+                if value is None or isinstance(value, (str, dict, list)):
+                    if after[group][key] != value:
                         raise ValueError("Frozen undefined metric changed")
                 else:
                     np.testing.assert_allclose(after[group][key], value, rtol=0, atol=1e-12)

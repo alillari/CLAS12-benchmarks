@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import math
 import os
@@ -24,11 +23,12 @@ from torch import nn
 from torch.nn import functional as F
 
 from .data import Cohort, eggnet_features, file_sha256
-from .sequences import CachedSequence, event_sequence, derived_sequence
+from .sequences import CachedSequence, derived_sequence
 from .interaction_network import SegmentClassifier
-from .predictions import save_predictions
 from .prepare_cohort import write_json
 from .upstream import ROOT, eggnet, exatrkx_embedding, exatrkx_filter, neighbor_edges
+from .finding_evaluation import (DEFAULT_METRICS, FindingEvaluation, contract, evaluate_events,
+                                 finding_fingerprints, finding_sequence, load_metrics, reference_receipt)
 
 
 class HitBatch(SimpleNamespace):
@@ -36,7 +36,7 @@ class HitBatch(SimpleNamespace):
         return getattr(self, key)
 
 
-def validate_recipe(config):
+def validate_recipe(config, *, new_finding=True):
     """Resolve new-run defaults explicitly; reject silent objective fallbacks."""
     objective = config.setdefault("eggnet_objective", "upstream_contrastive")
     if objective not in {"upstream_contrastive", "class_balanced_squared_hinge"}:
@@ -50,6 +50,8 @@ def validate_recipe(config):
         raise ValueError(f"Unknown Exa.TrkX edge orientation: {orientation}")
     if config["exatrkx"]["filter"].get("emb_channels", 0) != 0:
         raise ValueError("The CLAS12 runner supports coordinate-only filters (emb_channels=0)")
+    if new_finding or "finding_evaluation" in config:
+        config["finding_evaluation"] = contract(config.get("finding_evaluation"), new_run=new_finding)
 
 
 def egg_features(event):
@@ -173,37 +175,17 @@ def components(n, edges, min_size=2):
 
 def metric_module(source, output):
     path = output / "track_finding_metrics.py"
-    shutil.copyfile(source, path)
-    spec = importlib.util.spec_from_file_location("clas12_shared_track_metrics", path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    if path.exists():
+        if file_sha256(source) != file_sha256(path):
+            raise ValueError("Existing evaluator snapshot differs; use a fresh output directory")
+    else:
+        shutil.copyfile(source, path)
+    return load_metrics(path)
 
 
-def evaluate(events, predictions, metrics, output=None, method=None, cohort_sha=None):
-    rows, baseline = [], []
-    for i, (event, prediction) in enumerate(zip(events, predictions, strict=True)):
-        if len(prediction) != len(event.raw_features) or not np.issubdtype(np.asarray(prediction).dtype, np.integer):
-            raise ValueError("Invalid point prediction mapping")
-        row = metrics.event_track_metrics(event.labels["seg_target"], prediction)
-        rows.append({"identity": event.identity, **row})
-        if "coatjava_seg_pred" in event.labels:
-            baseline.append(metrics.event_track_metrics(event.labels["seg_target"], event.labels["coatjava_seg_pred"]))
-        if output:
-            save_predictions(output / "predictions" / f"event_{i:06d}.npz", event, prediction,
-                event.original_point_index, method=method, cohort_sha256=cohort_sha)
-    summary = metrics.summarize_event_metrics(rows)
-    result = {"metrics": summary, "metric_view": "native", "matching": vars(metrics.MatchConfig()),
-              "coatjava": metrics.summarize_event_metrics(baseline)}
-    if baseline:
-        result["model_minus_coatjava"] = metrics.compare_metric_summaries(summary, result["coatjava"])
-    if output:
-        write_json(output / "summary.json", result)
-        with (output / "per_event_metrics.jsonl").open("w") as stream:
-            for row in rows:
-                stream.write(json.dumps(row, allow_nan=False) + "\n")
-    return result
+def evaluate(events, predictions, metrics, output=None, method=None, cohort_sha=None, settings=None):
+    return evaluate_events(events, predictions, metrics, settings=settings, output=output,
+                           method=method, cohort_sha=cohort_sha)
 
 
 @torch.no_grad()
@@ -310,13 +292,13 @@ def train_stage(model, name, events, validation, loss_fn, config, output, device
 
 
 @torch.no_grad()
-def select_eggnet(model, events, config, metrics, device):
+def select_eggnet(model, events, config, metrics, device, settings=None):
     embeddings = derived_sequence(events, lambda i: embedding_output(model, events[i], "eggnet", device).detach().cpu().numpy())
     trials = []
     for eps in config["dbscan_eps"]:
         for min_samples in config["dbscan_min_samples"]:
             labels = (DBSCAN(eps=eps, min_samples=min_samples).fit_predict(z).astype(np.int64) for z in embeddings)
-            result = evaluate(events, labels, metrics)
+            result = evaluate(events, labels, metrics, settings=settings)
             trials.append({"eps": eps, "min_samples": min_samples, "track_f1": track_f1(result), **result})
     # Stable tie break: declared grid order; no test input to selection.
     return max(trials, key=lambda row: row["track_f1"]), trials
@@ -367,11 +349,21 @@ def graph_predictions(model, events, graphs, cut, config, device):
 
 def run(args):
     output = Path(args.output)
+    if output.exists() and any(output.iterdir()) and not args.resume:
+        raise FileExistsError("Existing run: use a fresh output or explicit --resume")
     output.mkdir(parents=True, exist_ok=True)
     if (output / "provenance.json").exists() and not args.resume:
         raise FileExistsError("Existing run: use a fresh output or explicit --resume")
     config = json.loads(Path(args.config).read_text())
-    validate_recipe(config)
+    new_finding = not args.resume
+    if args.resume:
+        saved_config = json.loads((output / "provenance.json").read_text())["config"]
+        # An explicit saved contract identifies the new-run default rules used
+        # originally, even if the recipe supplied only a subset of its fields.
+        new_finding = "finding_evaluation" in saved_config
+        if new_finding and "finding_evaluation" not in config:
+            config["finding_evaluation"] = saved_config["finding_evaluation"]
+    validate_recipe(config, new_finding=new_finding)
     if args.smoke:
         config.update(steps_per_stage=4, validation_interval=2, checkpoint_validation_events=4)
         if "warmup_steps" in config:
@@ -394,6 +386,10 @@ def _run_cohort(args, output, config, device, cohort):
     if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(device)
     metrics = metric_module(args.metrics, output)
+    evaluation = FindingEvaluation(metrics, config.get("finding_evaluation"))
+    if ("finding_evaluation" in cohort.spec and
+            contract(cohort.spec["finding_evaluation"])["truth_policy"] != evaluation.contract["truth_policy"]):
+        raise ValueError("Cohort finding truth policy differs from the requested recipe")
     source_files = sorted(p for folder in ("src", "configs", "vendor") for p in (ROOT / folder).rglob("*")
                           if p.is_file() and p.suffix in (".py", ".json", ".yaml") and "__pycache__" not in p.parts)
     data_hashes = cohort.data_fingerprints()
@@ -409,17 +405,22 @@ def _run_cohort(args, output, config, device, cohort):
         "loss": {"eggnet": config.get("eggnet_objective", "class_balanced_squared_hinge"),
                  "exatrkx_embedding": "class_balanced_squared_hinge", "edges": "class-mean BCE with declared GNN positive weight"},
         "smoke": args.smoke, "tiny_event_eggnet": "repeat missing coordinate neighbors; preserve every point"}
+    if "finding_evaluation" in config:
+        provenance.update(evaluation.metadata(), fm_reference=reference_receipt(),
+                          finding_data_sha256=finding_fingerprints(cohort, evaluation))
     if args.resume:
         old = json.loads((output / "provenance.json").read_text())
         for key in ("method", "config", "cohort_sha256", "metric_sha256", "source_sha256", "data_array_sha256"):
             if old[key] != provenance[key]:
                 raise ValueError(f"Resume provenance mismatch: {key}")
+        if old.get("finding_data_sha256") != provenance.get("finding_data_sha256"):
+            raise ValueError("Resume finding provenance sidecars changed")
     write_json(output / "provenance.json", provenance)
     (output / "pip_freeze.txt").write_text(subprocess.check_output([sys.executable, "-m", "pip", "freeze"], text=True))
     role_events = {}
     for role in ("train", "val"):
         count = min(len(cohort.roles[role]), 16 if role == "train" else 8) if args.smoke else len(cohort.roles[role])
-        role_events[role] = event_sequence(cohort, role, count, config.get("event_cache_size", 8))
+        role_events[role] = finding_sequence(cohort, role, evaluation, count, config.get("event_cache_size", 8))
     train, val = role_events["train"], role_events["val"]
     if config.get("track_checkpoint_selection"):
         checkpoint_indices = np.random.default_rng(config["seed"] + 1).choice(len(val), min(len(val), config["checkpoint_validation_events"]), replace=False).tolist()
@@ -442,10 +443,10 @@ def _run_cohort(args, output, config, device, cohort):
         def egg_score(m, events):
             ec = dict(config["eggnet"], dbscan_eps=config["eggnet"]["checkpoint_dbscan_eps"],
                 dbscan_min_samples=config["eggnet"]["checkpoint_dbscan_min_samples"])
-            return select_eggnet(m, events, ec, metrics, device)[0]["track_f1"]
+            return select_eggnet(m, events, ec, metrics, device, config.get("finding_evaluation"))[0]["track_f1"]
     selected_stages.append(train_stage(model, "embedding", train, checkpoint_val, embed_objective, config, output, device, args.resume, egg_score))
     if args.method == "eggnet":
-        selection, trials = select_eggnet(model, val, config["eggnet"], metrics, device)
+        selection, trials = select_eggnet(model, val, config["eggnet"], metrics, device, config.get("finding_evaluation"))
         write_json(output / "validation_selection.json", {"selected": selection, "trials": trials})
     else:
         ec = config["exatrkx"]
@@ -493,14 +494,16 @@ def _run_cohort(args, output, config, device, cohort):
             def gnn_score(m, items):
                 events, gs = map(list, zip(*items))
                 scores = graph_scores(m, events, gs, device)
-                return max(track_f1(evaluate(events, labels_from_scores(events, gs, scores, threshold, ec), metrics))
+                return max(track_f1(evaluate(events, labels_from_scores(events, gs, scores, threshold, ec), metrics,
+                                            settings=config.get("finding_evaluation")))
                            for threshold in ec["checkpoint_gnn_cuts"])
         selected_stages.append(train_stage(gnn, "gnn", derived_sequence(train, lambda i: (train[i], graphs["train"][i])),
             list(zip(checkpoint_val, checkpoint_graphs)), gnn_objective, config, output, device, args.resume, gnn_score))
         trials = []
         val_scores = graph_scores(gnn, val, graphs["val"], device)
         for threshold in ec["gnn_cuts"]:
-            result = evaluate(val, labels_from_scores(val, graphs["val"], val_scores, threshold, ec), metrics)
+            result = evaluate(val, labels_from_scores(val, graphs["val"], val_scores, threshold, ec), metrics,
+                              settings=config.get("finding_evaluation"))
             trials.append({"gnn_cut": threshold, "track_f1": track_f1(result), **result})
         selection = max(trials, key=lambda row: row["track_f1"])
         write_json(output / "validation_selection.json", {"selected": selection, "trials": trials})
@@ -512,7 +515,7 @@ def _run_cohort(args, output, config, device, cohort):
         record_resources(cohort, device, output, started)
         print("SMOKE_COMPLETE: test was not evaluated", flush=True)
         return
-    test = event_sequence(cohort, "test", cache_size=config.get("event_cache_size", 8))
+    test = finding_sequence(cohort, "test", evaluation, cache_size=config.get("event_cache_size", 8))
     with torch.no_grad():
         if args.method == "eggnet":
             predictions = derived_sequence(test, lambda i: eggnet_prediction(model, test[i], selection, device))
@@ -521,7 +524,7 @@ def _run_cohort(args, output, config, device, cohort):
             test_graphs = derived_sequence(test, lambda i: raw_graphs[i][:,
                 filter_probabilities(filt, test[i], raw_graphs[i], device) >= cut])
             predictions = graph_predictions(gnn, test, test_graphs, selection["gnn_cut"], ec, device)
-    result = evaluate(test, predictions, metrics, output, args.method, cohort.sha256)
+    result = evaluate(test, predictions, metrics, output, args.method, cohort.sha256, config.get("finding_evaluation"))
     record_resources(cohort, device, output, started)
     print("RUN_COMPLETE " + json.dumps(result, allow_nan=False), flush=True)
 
@@ -541,7 +544,7 @@ if __name__ == "__main__":
     parser.add_argument("--method", choices=("eggnet", "exatrkx"), required=True)
     parser.add_argument("--cohort", required=True)
     parser.add_argument("--config", default=str(ROOT / "configs/tracking.json"))
-    parser.add_argument("--metrics", required=True, help="CLAS12 train/downstream/track_finding_metrics.py")
+    parser.add_argument("--metrics", default=str(DEFAULT_METRICS), help="FM scorer; defaults to the pinned committed reference")
     parser.add_argument("--output", required=True)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--threads", type=int, default=4)

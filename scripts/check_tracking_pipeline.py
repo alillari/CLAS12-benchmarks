@@ -31,9 +31,9 @@ def main():
     for split in ("pretrain", "test"):
         features, targets = [], []
         for _ in range(12):
-            features.append(np.array([[1, 0, 1], [2, 0, 2], [3, 0, 3], [-1, 0, 1], [-2, 0, 2],
-                                      [-3, 0, 3], [0, 2, -1]], np.float32) + rng.normal(0, .01, (7, 3)).astype(np.float32))
-            targets.append(np.array([0, 0, 0, 1, 1, 1, -1], dtype=np.int64))
+            features.append(np.array([[1, 0, 1], [2, 0, 2], [3, 0, 3], [4, 0, 4], [-1, 0, 1], [-2, 0, 2],
+                                      [-3, 0, 3], [-4, 0, 4], [0, 2, -1]], np.float32) + rng.normal(0, .01, (9, 3)).astype(np.float32))
+            targets.append(np.array([0, 0, 0, 0, 1, 1, 1, 1, -1], dtype=np.int64))
         for name, values in (("features", features), ("seg_target", targets), ("coatjava_seg_pred", targets)):
             RaggedMmap.from_generator(root / f"{name}_{split}", iter(values), batch_size=12)
         (root / f"samples_{split}.jsonl").write_text("".join(json.dumps({"source_file": split + ".hipo",
@@ -56,7 +56,7 @@ def main():
         for i, path in enumerate(prediction_paths):
             with np.load(path) as prediction:
                 np.testing.assert_array_equal(prediction["original_point_index"], cohort.event("test", i).original_point_index)
-                assert len(prediction["predictions"]) == 7
+                assert len(prediction["predictions"]) == 9
         summary = json.loads((output / method / "summary.json").read_text())
         assert summary["metrics"]["n_events"] == 3
         assert summary["coatjava"]["track_efficiency_global"] == 1.

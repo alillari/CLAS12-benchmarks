@@ -60,9 +60,10 @@ pion/kaon/proton/electron/other, with -100 for invalid PID. Raw signed PDG,
 native noise and validity fields remain available through the source reader.
 `Event.masks` preserves supervised validity.
 
-The default noise policy is `primary_unassigned_is_noise_v1`, matching the
-foundation-model adapter's treatment of all unassigned clusters as noise,
-including contested ownership. Use `--noise-policy primary_valid_only_v1` to
+Generic HDF5 cohort preparation defaults to `primary_unassigned_is_noise_v1`,
+the historical projection treating unassigned clusters (including contested
+ownership) as noise. The [dedicated noise runner](NOISE_TAGGING.md) imports FM
+cohorts with the four-cluster rule. Use `--noise-policy primary_valid_only_v1` to
 instead supervise only valid native noise labels; invalid entries then use -100
 with a false mask. These are different declared label policies.
 

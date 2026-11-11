@@ -14,7 +14,7 @@ import sys
 import numpy as np
 
 from .data import event_key, file_sha256
-from .fm_reference import track_finding_metrics as reference
+from .fm_reference import source_receipt, track_finding_metrics as reference
 from .fm_reference.track_eligibility import eligible_primary_labels, primary_track_eligibility_contract
 from .sequences import CachedSequence
 
@@ -215,12 +215,7 @@ def require_same_population(left, right):
 
 
 def reference_receipt():
-    directory = Path(reference.__file__).parent
-    receipt = json.loads((directory / "sources.json").read_text())
-    for name, item in receipt["files"].items():
-        if file_sha256(directory / name) != item["sha256"]:
-            raise ValueError(f"Pinned FM reference changed: {name}")
-    return receipt
+    return source_receipt("track_finding_metrics.py", "track_eligibility.py")
 
 
 def verify_reference_provenance(provenance):

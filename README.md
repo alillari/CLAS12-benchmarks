@@ -17,7 +17,7 @@ CLAS12 foundation-model repository and does not import its models, trainers or c
 |---|---|
 | EggNet | Upstream source, CLAS12 exporter, training and DBSCAN evaluation |
 | Exa.TrkX | Upstream embedding/filter forwards and Torch Interaction Network port |
-| GATConv, GCNConv, GraphConv, SAGEConv | Paper-based semantic graph reconstruction using PyTorch Geometric |
+| GATConv, GCNConv, GraphConv, SAGEConv | PyTorch Geometric models and [matched HDF5 noise-tagging benchmark](docs/NOISE_TAGGING.md) |
 | OneFormer3D | Upstream source and S3DIS configuration; CLAS12 adaptation pending |
 
 The FM4NPP authors' external-baseline adaptations were not present in the public
@@ -53,7 +53,9 @@ python scripts/verify_sources.py
 python -m unittest discover -s tests -v
 ```
 
-The `graphs` extra is sufficient for our graph classifiers and EggNet data export.
+The `graphs` extra provides the graph models and EggNet data export. The
+[HDF5 noise-tagging runner](docs/NOISE_TAGGING.md) also uses the `hdf5` and
+`evaluation` extras.
 It does not install the three upstream applications. Each has its own dependencies;
 use separate environments for those. Original requirement files are preserved in
 `vendor/`. The standalone tracking runner uses the `tracking` extra and native
@@ -110,9 +112,8 @@ mapping differs from FM4NPP's 48-layer TPC radius encoding. No TPC geometry or d
 energy is silently applied to CLAS12. For xyz inputs, `node_features` requires an
 explicit position-only opt-in; energy-bearing inputs must declare `exyz`.
 
-Graph classifiers return per-point semantic logits. They are PID/noise baselines,
-not published momentum-regression models or track-instance classifiers. Class
-mapping and ignored-label policy must be set in a task-specific training runner.
+Graph classifiers return per-point semantic logits. The [noise-tagging runner](docs/NOISE_TAGGING.md)
+imports an FM adapter cohort and trains binary cluster classifiers on native HDF5 data.
 
 ## Experiment boundary
 

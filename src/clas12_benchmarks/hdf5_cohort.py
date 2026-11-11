@@ -65,6 +65,42 @@ def cohort_spec(sources, members, scales, noise_policy=NOISE_POLICY):
     return {"schema": COHORT_SCHEMA, "datasets": datasets, "roles": roles}
 
 
+def fm_cohort_spec(root, saved, plan_id, *, noise_policy=NOISE_POLICY):
+    """Freeze FM event membership and order against the original HDF5 publication."""
+    if not isinstance(saved, dict) or set(saved) != set(SPLITS.values()):
+        raise ValueError("Expected nonempty FM train/validation/test event cohorts")
+    members = {}
+    with ExitStack() as stack:
+        sources = {split: stack.enter_context(ClusterSource(root, split)) for split in SPLITS.values()}
+        if any(source.manifest["plan_id"] != plan_id for source in sources.values()):
+            raise ValueError("FM HDF5 plan_id mismatch")
+        for role, split in SPLITS.items():
+            rows = saved[split]
+            if not isinstance(rows, list) or not rows:
+                raise ValueError(f"Empty or invalid FM {split} cohort")
+            indices = []
+            for row in rows:
+                if not isinstance(row, dict):
+                    raise ValueError(f"Invalid FM {split} event")
+                index = row.get("source_event_index")
+                if type(index) is not int or index < 0 or row.get("segment_label") is not None:
+                    raise ValueError("FM cohorts must contain complete event samples")
+                if any(type(row.get(key)) is not int for key in ("source_id", "original_ordinal")):
+                    raise ValueError("Missing FM physical event identity")
+                indices.append(index)
+            if len(set(indices)) != len(indices):
+                raise ValueError(f"Duplicate FM {split} events")
+            identities = sources[split].identities(indices)
+            for row, index in zip(rows, indices, strict=True):
+                identity = identities[index]
+                keys = ("source_id", "original_ordinal", "source_manifest_id")
+                if any(key in row and row[key] != identity[key] for key in keys):
+                    raise ValueError(f"FM physical event identity mismatch: {split}:{index}")
+            members[role] = indices
+        scales = normalization(sources["train"], members["train"])
+        return cohort_spec(sources, members, scales, noise_policy)
+
+
 def summary(cohort):
     roles = {}
     for role, members in cohort.roles.items():

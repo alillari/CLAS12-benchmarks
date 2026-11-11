@@ -186,7 +186,8 @@ class FindingEvaluationTests(unittest.TestCase):
         complete={**metadata,"evaluation_population_sha256":"a"}
         with self.assertRaisesRegex(ValueError,"source fingerprints differ"):
             require_same_population(complete,{**complete,"metrics_source_sha256":"changed"})
-        reference_receipt()
+        self.assertEqual(set(reference_receipt()["files"]),
+                         {"track_finding_metrics.py", "track_eligibility.py"})
 
     def test_population_uses_physical_identity_truth_and_cluster_membership(self):
         e = event([0]*4)

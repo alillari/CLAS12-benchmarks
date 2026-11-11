@@ -134,7 +134,7 @@ class Cohort:
         return self.spec["schema"] == "clas12_baseline_cohort_v2"
 
     def _init_hdf5(self):
-        from .hdf5 import ClusterSource, FORMAT, FEATURE_RECIPE, NOISE_POLICY, NATIVE_NOISE_POLICY, PID_POLICY
+        from .hdf5 import ClusterSource, FORMAT, FEATURE_RECIPE, NOISE_POLICIES, PID_POLICY
         self.sha256 = file_sha256(self.path)
         self.roles = self.spec["roles"]
         if set(self.roles) != {"train", "val", "test"}:
@@ -155,7 +155,7 @@ class Cohort:
             for name, spec in self.spec["datasets"].items():
                 if (spec.get("storage_format") != FORMAT or spec.get("token_kind") != "clusters"
                         or spec.get("feature_recipe") != FEATURE_RECIPE or spec.get("input_layout") != "xyz"
-                        or spec.get("noise_policy") not in {NOISE_POLICY, NATIVE_NOISE_POLICY}
+                        or spec.get("noise_policy") not in NOISE_POLICIES
                         or spec.get("pid_policy") != PID_POLICY):
                     raise ValueError(f"Unsupported HDF5 feature/label contract: {name}")
                 for key in ("eta_scale", "radius_scale"):

@@ -15,6 +15,8 @@ FORMAT = "cvt-clusters-h5-v1"
 COHORT_SCHEMA = "clas12_baseline_cohort_v2"
 NOISE_POLICY = "primary_unassigned_is_noise_v1"
 NATIVE_NOISE_POLICY = "primary_valid_only_v1"
+MIN4_NOISE_POLICY = "primary_unassigned_or_lt4_is_noise_v2"
+NOISE_POLICIES = (NOISE_POLICY, NATIVE_NOISE_POLICY, MIN4_NOISE_POLICY)
 PID_POLICY = "abs_pdg_pion_kaon_proton_electron_other_v1"
 FEATURE_RECIPE = "cluster_xyz_eta_phi_radius_v1"
 POINT_FIELDS = ("clusters.xyz", "clusters.primary_segment", "clusters.reco_segment",
@@ -302,6 +304,11 @@ def cluster_projection(rows, *, noise_policy=NOISE_POLICY, pid_policy=PID_POLICY
         raise ValueError("Invalid native noise label/validity")
     if noise_policy == NOISE_POLICY:
         noise, mask = (seg < 0).astype(np.int64), np.ones(n, dtype=bool)
+    elif noise_policy == MIN4_NOISE_POLICY:
+        from .fm_reference.track_eligibility import eligible_primary_labels
+
+        noise = (eligible_primary_labels(seg) < 0).astype(np.int64)
+        mask = np.ones(n, dtype=bool)
     elif noise_policy == NATIVE_NOISE_POLICY:
         mask = noise_valid
         noise = np.where(mask, raw_noise, -100).astype(np.int64)

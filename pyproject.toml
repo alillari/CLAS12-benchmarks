@@ -12,6 +12,7 @@ dependencies = ["numpy>=1.24", "scipy>=1.10", "mmap-ninja>=0.7"]
 [project.optional-dependencies]
 graphs = ["torch>=2.1", "torch-geometric==2.4.0"]
 tracking = ["torch>=2.1", "scikit-learn>=1.3"]
+evaluation = ["scikit-learn>=1.3"]
 hdf5 = ["h5py>=3.8"]
 plotting = ["matplotlib>=3.7"]
 
@@ -20,3 +21,6 @@ clas12-benchmarks = "clas12_benchmarks.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"clas12_benchmarks.fm_reference" = ["sources.json"]

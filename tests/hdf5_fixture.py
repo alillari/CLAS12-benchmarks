@@ -6,7 +6,7 @@ import h5py
 import numpy as np
 
 
-def make_publication(root):
+def make_publication(root, *, cluster_fields=None):
     root = Path(root)
     root.mkdir()
     (root / "geometry").mkdir()
@@ -63,6 +63,8 @@ def make_publication(root):
                         "track_row": np.array([0,1,0,1],np.int32),
                         "tid": np.array([17,42,17,42],np.int32),
                         "count": np.array([2,1,2,1],np.int32)}}
+                if cluster_fields is not None:
+                    one["clusters"] = cluster_fields
                 one["reco/cvtrec_tracks"] = {key: value.copy() for key,value in one["reco/cvt_tracks"].items()}
                 one["reco/cvtrec_tracks"]["native"]["ID"] = [700,900]
                 one["reco/cvtrec_tracks"]["benchmark_p"] *= 2

@@ -66,12 +66,11 @@ or added residual connections; PyG 2.4.0 defaults for each convolution, includin
 operator-specific self loops and aggregation. The helper does not add self edges;
 some convolution operators do. These choices are recorded, not asserted to match
 the authors' unavailable code. CPU tests check all four operators' gradient updates
-and disk checkpoint reload. There is no production training runner yet.
+and disk checkpoint reload. The [HDF5 noise runner](NOISE_TAGGING.md) trains and
+evaluates these operators on exact FM adapter cohorts.
 
-Remaining work: define PID/noise label maps from dataset metadata, ignore-label
-handling, common training/validation selection and budget, and a reusable semantic
-training runner; validate on real data. Momentum regression needs a new task head
-and must be identified as our extension rather than an original FM4NPP baseline.
+PID still needs a task-specific runner and real-data validation. Momentum
+regression would require a separate task head as an extension of the baseline.
 
 ## OneFormer3D
 

@@ -1,11 +1,18 @@
 """Train the PyG noise taggers on an exact FM HDF5 event cohort."""
 import argparse
+from contextlib import ExitStack
 import hashlib
-from importlib.metadata import version
+from importlib.metadata import distributions, version
 from itertools import chain, repeat
 import json
 import math
+import os
 from pathlib import Path
+import platform
+import re
+import shutil
+import subprocess
+from tempfile import TemporaryDirectory
 
 import numpy as np
 import torch
@@ -32,6 +39,38 @@ def event_graph(event):
                 coatjava_noise=torch.from_numpy(event.labels["coatjava_seg_pred"] < 0))
 
 
+def run_provenance(device):
+    package = Path(__file__).resolve().parent
+    root = package.parent.parent
+    files = sorted(package.rglob("*.py")) + [package / "fm_reference" / "sources.json"]
+    source_lock = root / "sources.lock.json"
+    packages = {}
+    for dist in distributions():
+        name = dist.metadata.get("Name")
+        if name:
+            packages.setdefault(re.sub(r"[-_.]+", "-", name).lower(), dist.version)
+    receipt = {
+        "source_sha256": {p.relative_to(package).as_posix(): file_sha256(p) for p in files},
+        "sources_lock": json.loads(source_lock.read_text()) if source_lock.is_file() else None,
+        "git_commit": os.environ.get("BENCHMARK_GIT_COMMIT"),
+        "python": platform.python_version(),
+        "platform": platform.platform(),
+        "packages": packages,
+        "device": str(device),
+        "torch_cuda": torch.version.cuda,
+        "gpu": torch.cuda.get_device_name(device) if device.type == "cuda" else None,
+    }
+    if (root / ".git").exists() and shutil.which("git"):
+        git = ["git", "--no-optional-locks", "-C", str(root)]
+        head = subprocess.check_output([*git, "rev-parse", "HEAD"], text=True).strip()
+        patch = subprocess.check_output(
+            [*git, "diff", "--no-ext-diff", "--no-textconv", "--binary", "HEAD",
+             "--", "src", "pyproject.toml", "sources.lock.json"],
+            encoding="utf-8", errors="surrogateescape")
+        receipt.update(git_commit=head, tracked_source_diff=patch)
+    return receipt
+
+
 def max_balanced_accuracy_threshold(labels, scores):
     """Exact FM campaign sweep with strict > and the lowest threshold on ties."""
     signal, noise = (np.sort(scores[labels == label]) for label in (0, 1))
@@ -54,6 +93,8 @@ def validation_loss(model, loader, device, weights):
         losses = F.cross_entropy(logits, batch.y, weight=weights, reduction="none")
         numerator += losses.sum(dtype=torch.float64).item()
         denominator += batch.y.numel() if weights is None else weights[batch.y].sum(dtype=torch.float64).item()
+    if not denominator:
+        raise ValueError("Validation cohort has no clusters")
     loss = numerator / denominator
     if not math.isfinite(loss):
         raise RuntimeError("Nonfinite pooled validation loss")
@@ -71,6 +112,8 @@ def evaluate(model, loader, device, rows, output, split, calibration=None):
         batch = batch.to(device)
         scores_all.append(model(batch.x, batch.edge_index).softmax(-1)[:, 1].cpu().numpy())
     labels = np.concatenate(labels_all).astype(np.int8)
+    if not len(labels):
+        raise ValueError(f"{split.capitalize()} cohort has no clusters to score")
     scores = np.concatenate(scores_all)
     coat = np.concatenate(coat_all).astype(np.int8)
     offsets = np.r_[0, np.cumsum(sizes, dtype=np.int64)]
@@ -111,7 +154,7 @@ def fit(operator, loaders, device, weights, config, output):
                                   weight_decay=config["weight_decay"])
     best_loss, history = math.inf, []
     checkpoint = output / "checkpoint.pt"
-    batches = chain.from_iterable(repeat(loaders["train"]))
+    batches = (batch for batch in chain.from_iterable(repeat(loaders["train"])) if batch.y.numel())
     for step, batch in zip(range(1, config["optimizer_steps"] + 1), batches):
         model.train()
         batch = batch.to(device)
@@ -151,21 +194,33 @@ def run(data_root, fm_cohorts, plan_id, output, *, steps, operators=tuple(OPERAT
     device = torch.device(device)
     if device.type == "cuda" and not torch.cuda.is_available():
         raise ValueError("Requested CUDA device is unavailable")
+    output = Path(output)
+    if output.exists():
+        raise FileExistsError(output)
     reference = source_receipt("noise_metrics.py", "track_eligibility.py")
     saved = Path(fm_cohorts).read_bytes()
     rows = json.loads(saved)
     spec = fm_cohort_spec(data_root, rows, plan_id, noise_policy=MIN4_NOISE_POLICY)
-    output = Path(output)
-    output.mkdir(parents=True, exist_ok=False)
-    (output / "cohorts.json").write_bytes(saved)
-    write_json(output / "cohort.json", spec)
-    with Cohort(output / "cohort.json") as cohort:
+    with ExitStack() as stack:
+        manifest = Path(stack.enter_context(TemporaryDirectory())) / "cohort.json"
+        write_json(manifest, spec)
+        cohort = stack.enter_context(Cohort(manifest))
         counts = np.zeros(2, dtype=np.int64)
         for index in range(len(cohort.roles["train"])):
             labels = cohort.event("train", index).labels["noise_target"]
             counts += np.bincount(labels, minlength=2)
+        if not counts.sum():
+            raise ValueError("Training cohort has no clusters")
+        if not any(np.any(cohort.event("val", i).labels["noise_target"] == 0)
+                   for i in range(len(cohort.roles["val"]))):
+            raise ValueError("Validation cohort has no signal clusters under the FM four-cluster rule")
         class_weights = inverse_frequency_weights(counts) if class_balance == "inverse_frequency" else None
         weights = None if class_weights is None else torch.tensor(class_weights, device=device, dtype=torch.float32)
+        provenance = run_provenance(device)
+        output.mkdir(parents=True, exist_ok=False)
+        (output / "cohorts.json").write_bytes(saved)
+        (output / "cohort.json").write_bytes(manifest.read_bytes())
+        write_json(output / "provenance.json", provenance)
         config = dict(task="noise", training_mode="graph_classifier", operators=list(operators),
                       optimizer="AdamW", optimizer_steps=steps, val_interval=val_interval, batch_size=batch_size,
                       learning_rate=lr, weight_decay=weight_decay, seed=seed, device=str(device),
@@ -176,7 +231,8 @@ def run(data_root, fm_cohorts, plan_id, output, *, steps, operators=tuple(OPERAT
                                          track_eligibility_contract=primary_track_eligibility_contract()),
                       fm_reference=reference,
                       validation_selection="loss", threshold_source="validation", sample_unit="event",
-                      cohort_sha256=cohort.sha256, fm_cohorts_sha256=hashlib.sha256(saved).hexdigest())
+                      cohort_sha256=cohort.sha256, fm_cohorts_sha256=hashlib.sha256(saved).hexdigest(),
+                      provenance_sha256=file_sha256(output / "provenance.json"))
         write_json(output / "resolved_config.json", config)
         loaders = {}
         for role in SPLITS:

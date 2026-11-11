@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import h5py
 import numpy as np
 import torch
 
@@ -11,9 +12,22 @@ from clas12_benchmarks.data import Cohort, file_sha256
 from clas12_benchmarks.fm_reference.noise_metrics import at_threshold, calibrate_thresholds, score_summary
 from clas12_benchmarks.graphs import OPERATORS
 from clas12_benchmarks.hdf5 import ClusterSource, MIN4_NOISE_POLICY
-from clas12_benchmarks.noise_tagging import main, max_balanced_accuracy_threshold
+from clas12_benchmarks.noise_tagging import main, max_balanced_accuracy_threshold, run
 
 from hdf5_fixture import make_publication
+
+
+def write_fm_cohorts(data, output, train=(3, 1)):
+    rows = {}
+    for split in ("train", "validation", "test"):
+        indices = train if split == "train" else (3, 1)
+        with ClusterSource(data, split) as source:
+            identities = source.identities(indices)
+        rows[split] = [dict(source_event_index=index, source_id=identities[index]["source_id"],
+                            original_ordinal=identities[index]["original_ordinal"], segment_label=None)
+                       for index in indices]
+    output.write_text(json.dumps(rows))
+    return output
 
 
 class NoiseTaggingTests(unittest.TestCase):
@@ -24,6 +38,16 @@ class NoiseTaggingTests(unittest.TestCase):
         expected = max(thresholds, key=lambda t: at_threshold(labels, scores, t)["balanced_accuracy"])
         self.assertEqual(max_balanced_accuracy_threshold(labels, scores), expected)
         np.testing.assert_equal(max_balanced_accuracy_threshold(labels[:2], scores[:2]), thresholds[0])
+
+    def test_validation_without_signal_fails_before_creating_run(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            data = make_publication(root / "data")
+            fm = write_fm_cohorts(data, root / "cohorts.json")
+            output = root / "run"
+            with self.assertRaisesRegex(ValueError, "Validation cohort has no signal clusters"):
+                run(data, fm, "fixture-plan", output, steps=2)
+            self.assertFalse(output.exists())
 
     def test_cli_imports_fm_members_trains_and_scores_all_operators(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -38,18 +62,16 @@ class NoiseTaggingTests(unittest.TestCase):
                 primary_noise_valid=np.ones(9, bool),
             )
             data = make_publication(root / "data", cluster_fields=clusters)
-            rows = {}
-            for split in ("train", "validation", "test"):
-                with ClusterSource(data, split) as source:
-                    identities = source.identities([3, 1])
-                rows[split] = [dict(source_event_index=index, source_id=identities[index]["source_id"],
-                                    original_ordinal=identities[index]["original_ordinal"], segment_label=None)
-                               for index in (3, 1)]
-            fm = root / "cohorts.json"
-            fm.write_text(json.dumps(rows))
+            # This shard contains only row 2. Preserve the event with no clusters.
+            with h5py.File(data / "train/part-0001.h5", "r+") as file:
+                file["clusters/offsets"][:] = 0
+                for name, value in clusters.items():
+                    del file[f"clusters/{name}"]
+                    file[f"clusters/{name}"] = value[:0]
+            fm = write_fm_cohorts(data, root / "cohorts.json", train=(3, 2, 1))
             output = root / "run"
             args = ["noise_tagging", "--data-root", str(data), "--fm-cohorts", str(fm), "--plan-id", "fixture-plan",
-                    "--output", str(output), "--steps", "2", "--val-interval", "1", "--batch-size", "2",
+                    "--output", str(output), "--steps", "3", "--val-interval", "1", "--batch-size", "1",
                     "--class-balance", "inverse_frequency"]
             with patch("sys.argv", args), patch("builtins.print"):
                 main()
@@ -58,23 +80,30 @@ class NoiseTaggingTests(unittest.TestCase):
             self.assertEqual(fm.read_bytes(), (output / "cohorts.json").read_bytes())
             with Cohort(output / "cohort.json") as cohort:
                 for role in ("train", "val", "test"):
-                    self.assertEqual([member["index"] for member in cohort.roles[role]], [3, 1])
+                    indices = [3, 2, 1] if role == "train" else [3, 1]
+                    self.assertEqual([member["index"] for member in cohort.roles[role]], indices)
                     event = cohort.event(role, 0)
                     np.testing.assert_array_equal(event.labels["seg_target"], [3] * 4 + [9] * 3 + [-1] * 2)
                     np.testing.assert_array_equal(event.labels["noise_target"], [0] * 4 + [1] * 5)
             report = json.loads((output / "summary.json").read_text())
+            provenance = json.loads((output / "provenance.json").read_text())
+            self.assertIn("noise_tagging.py", provenance["source_sha256"])
+            self.assertIn("torch-geometric", provenance["packages"])
             self.assertEqual(set(report["models"]), set(OPERATORS))
             for operator, relative in report["models"].items():
                 with self.subTest(operator=operator):
                     folder = output / operator
                     result = json.loads((output / relative).read_text())
                     history = json.loads((folder / "training_history.json").read_text())
-                    self.assertEqual([entry["step"] for entry in history], [1, 2])
+                    self.assertEqual([entry["step"] for entry in history], [1, 2, 3])
+                    self.assertTrue(all(np.isfinite(entry["train_batch_loss"]) for entry in history))
                     best = min(history, key=lambda entry: entry["validation_loss"])
                     self.assertEqual(result["selected_checkpoint_step"], best["step"])
                     self.assertEqual(result["selected_validation_loss"], best["validation_loss"])
                     self.assertEqual(result["data_contract"]["noise_policy"], MIN4_NOISE_POLICY)
                     self.assertEqual(result["training_class_counts"], [8, 10])
+                    self.assertEqual(result["train_samples"], 3)
+                    self.assertEqual(result["provenance_sha256"], file_sha256(output / "provenance.json"))
                     self.assertEqual(result["checkpoint_sha256"], file_sha256(folder / "checkpoint.pt"))
                     ckpt = torch.load(folder / "checkpoint.pt", map_location="cpu", weights_only=True)
                     self.assertEqual(ckpt["operator"], operator)

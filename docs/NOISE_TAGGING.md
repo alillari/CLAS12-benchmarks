@@ -28,6 +28,8 @@ if it is unassigned or belongs to an MC segment with fewer than four owned clust
 in its complete event. All clusters remain in the graph. The COATJAVA comparison
 flags the same clusters by `reco_segment < 0`. When importing cohorts from an older
 FM evaluation, compare scores after applying the same truth definition to both.
+Empty events remain in the cohort. A batch with zero clusters consumes no optimizer
+update. The validation cohort needs signal clusters to calibrate retention.
 
 The selected checkpoint minimizes pooled validation cross-entropy, with the
 earliest checkpoint retained on ties. After reloading it, the runner reports the
@@ -38,6 +40,8 @@ thresholds unchanged to test scores. Noise is predicted when `P(noise) > thresho
 
 Each operator writes its checkpoint, validation history, split metrics, event
 confusion records, and score archives with offsets into the imported event order.
-The `adapter` metric key denotes the evaluated graph model, using the FM report
-schema. A completed run has a top-level `summary.json` listing each result and the
+The `adapter` key stores the graph model's metrics under the names used by the FM
+evaluator. The shared `provenance.json` records source hashes and the runtime
+environment. From a Git checkout it also captures the commit and tracked source
+diff. A completed run has a top-level `summary.json` listing each result and the
 shared cohort fingerprint. Use a fresh output directory for a new run.

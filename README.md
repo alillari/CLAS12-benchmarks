@@ -18,6 +18,7 @@ CLAS12 foundation-model repository and does not import its models, trainers or c
 | EggNet | Upstream source, CLAS12 exporter, training and DBSCAN evaluation |
 | Exa.TrkX | Upstream embedding/filter forwards and Torch Interaction Network port |
 | GATConv, GCNConv, GraphConv, SAGEConv | PyTorch Geometric models and [matched HDF5 noise-tagging benchmark](docs/NOISE_TAGGING.md) |
+| CVT strip momentum MLP | Strip geometry, stereo and bending features with [truth-grouped HDF5 momentum evaluation](docs/MOMENTUM.md#cvt-strip-momentum) |
 | OneFormer3D | Upstream source and S3DIS configuration; CLAS12 adaptation pending |
 
 The FM4NPP authors' external-baseline adaptations were not present in the public

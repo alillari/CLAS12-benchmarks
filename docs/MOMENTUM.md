@@ -106,3 +106,57 @@ The evaluator dispatches by pack schema, rejects incompatible prediction
 fingerprints/units and legacy companion rows for HDF5, and retains the existing
 all-track/common-CVT metric definitions. Both formats remain readable without
 the raw data; h5py is needed for HDF5 preparation, not packed scoring.
+
+## CVT strip momentum
+
+The standalone strip benchmark uses the complete `cvt-strips-h5-v1` product.
+It predicts the published observed entrance momentum from truth-associated
+strips on at least four distinct BST/BMT layers. The 307-feature MLP uses
+charge-weighted layer geometry and readout summaries, approximate BST stereo
+crossings, and pairs of transverse measurements for signed curvature estimates.
+The trainable head has four residual blocks of width 320 and predicts log
+momentum, local azimuth and pseudorapidity. Its outputs are converted to
+Cartesian momentum in GeV/c for evaluation. The implementation uses PyTorch
+layers and trains from scratch.
+
+Use the `hdf5`, `tracking` and `plotting` extras with a CUDA PyTorch build
+for training and checkpoint evaluation. The commands below reproduce the
+large-cohort stage on `cvt_strip_hdf5_20261105_001`. Set `STRIPS` to that
+product and `OUT` to an artifact directory outside the checkout.
+
+```bash
+python -m clas12_benchmarks.strip_momentum.cache_strips \
+  --root "$STRIPS" --split train --events 1500000 --layer-only --out "$OUT/train"
+python -m clas12_benchmarks.strip_momentum.cache_strips \
+  --root "$STRIPS" --split validation --events 16000 --out "$OUT/validation"
+python -m clas12_benchmarks.strip_momentum.cache_strips \
+  --root "$STRIPS" --split test --events 60000 --out "$OUT/test"
+
+mkdir -p "$OUT/fits" "$OUT/evaluation"
+python -m clas12_benchmarks.strip_momentum.strip_adapter \
+  --cache "$OUT/train" --val-cache "$OUT/validation" --out "$OUT/fits" \
+  --train-size 2737603 --val-size 18000 --steps 45000 --batch 512 \
+  --interval 4500 --amp \
+  --arm helix:angular:0.0008:320:4:42 \
+  --arm helix:angular-weighted:0.00065:320:4:23
+python -m clas12_benchmarks.strip_momentum.evaluate_strips \
+  --final "$OUT/fits" --train-cache "$OUT/train" \
+  --validation "$OUT/validation" --test "$OUT/test" --out "$OUT/evaluation"
+python -m clas12_benchmarks.strip_momentum.plot_residuals_vs_true_p \
+  "$OUT/evaluation" "$OUT/plots"
+```
+
+The cache builder samples windows across the published splits and records the
+dataset manifest hash and ordered track identities. The evaluator selects
+checkpoints and ensemble size on validation momentum MAE. Test output includes
+all eligible tracks and the subset with a unique, finite first-pass COATJAVA
+match. The strip model receives truth groupings. COATJAVA uses its reconstructed
+track memberships. The paired result measures momentum conditional on those inputs.
+
+The November 18, 2026 a02c run measured 58.9 MeV/c momentum MAE and a 2.68%
+central 68% half-width in relative error for the validation-selected single
+model on 109,629 test tracks. The archived campaign includes smaller screening
+stages and a CLAS12 Mamba2 reference. The standalone evaluator accepts
+archived stage rankings through `--screen` and `--large` and replays the
+standalone fits using their saved checkpoints. The saved Mamba2 reference
+predictions can be scored from the original campaign's prediction archive.

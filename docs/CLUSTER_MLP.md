@@ -6,13 +6,15 @@ truth-associated cluster membership and observed direct-primary momentum at
 the first-layer/Hilbert reference. Track finding and real-data transfer require
 separate evaluations.
 
-## Three recipes from the November 25, 2026 study
+## Recipes from the November 25, 2026 study
 
 | Recipe | Training labels | Updates × batch | Momentum magnitude MAE (MeV/c) | Δp/p central 68% half-width (%) | θ MAE (°) | Wrapped φ MAE (°) |
 |---|---:|---:|---:|---:|---:|---:|
 | Aligned 24, `g18_endz` | 1,872,952 | 45,000 × 512 | 35.19 | 2.61 | 0.412 | 0.113 |
 | Compact full-label 16, `bmt_cslope_outer16` | 1,872,952 | 45,000 × 512 | 36.60 | 2.68 | 0.425 | 0.115 |
 | Engineered 10k-label 17, `bst_angle17` | 10,000 | 6,500 × 256 | 52.53 | 3.52 | 0.838 | 0.242 |
+| Distinct 218, `distinct218` | 1,872,952 | 45,000 × 512 | 35.37 | 2.60 | 0.391 | 0.114 |
+| Distinct 218, `distinct218` | 10,000 | 6,500 × 256 | 54.09 | 3.60 | 0.748 | 0.239 |
 
 The entries average metrics from seeds 23, 42 and 91 on the same 74,789
 held-out simulation tracks. The upstream cohort eligibility join was retained.
@@ -39,11 +41,29 @@ is half the distance between the 16th and 84th percentiles of signed Δp/p.
    relative to aligned 24. The distinct 218 at that budget scored 54.09 MeV/c
    and had lower θ MAE, 0.748°. The two label budgets yield different rankings.
 
-In the same-measurement frame control, the three-seed full-label 108-coordinate
-fits gave 34.98 MeV/c with aligned inputs and local φ, 70.43 with laboratory
-inputs and local φ, and 96.95 with laboratory inputs and laboratory φ. These
-results apply to the tested training recipe and simulation. For comparisons
-against the frozen Campaign 4 M6 fit, use the separate matched 100k-label
+The distinct 218 recipe preserves the study's ordered selection of varying,
+nonduplicate columns from the original 307 on the audited cohort. It includes
+local layer coordinates, laboratory x and y, pitch, occupancy, BMT-C sweep, BST
+stereo estimates and transverse and longitudinal fit summaries.
+
+## Matched 108-coordinate controls
+
+Each recipe uses the same 108 center and endpoint coordinates in BST 1–6
+followed by BMT 1–6. All five results use the full-label budget in the table
+above and average the three seeds on the same held-out tracks.
+
+| Recipe | Input frame | φ target frame | φ readout | Momentum MAE (MeV/c) |
+|---|---|---|---|---:|
+| `xyz108_local` | Aligned | Local | Scalar | 34.98 |
+| `xyz108_lab_local_target` | Laboratory | Local | Scalar | 70.43 |
+| `xyz108_lab` | Laboratory | Laboratory | Scalar | 96.95 |
+| `xyz108_local_circle` | Aligned | Local | Circular | 34.96 |
+| `xyz108_lab_circle` | Laboratory | Laboratory | Circular | 69.72 |
+
+Local φ targets use the measured α during training and decode by adding it
+back. Circular heads derive φ from a pair of FP32 outputs. These results
+apply to the tested training recipe and simulation. For comparisons against
+the frozen Campaign 4 M6 fit, use the separate matched 100k-label
 result (aligned 24 at 39.20 MeV/c, frozen M6 at 50.66 MeV/c). Both used 45,000
 updates at batch 128 and the same test tracks.
 
@@ -63,8 +83,8 @@ python -m clas12_benchmarks.cluster_mlp predict --manifest "$OUT/tracks.npz" \
 clas12-benchmarks evaluate-momentum "$OUT/tracks.npz" "$OUT/aligned24.csv.gz"
 ```
 
-The geometry option reads measured detector, layer and endpoints from the HDF5
-product. It requires four occupied layers and positive momentum magnitude in
+The geometry option reads detector, layer, endpoints, pitch and length from
+the HDF5 product. It requires four occupied layers and positive momentum magnitude in
 addition to the regular cluster-count and truth-validity cuts. Inspect the
 pack to see the resulting role populations, or read `selection_counts` in its
 metadata for the per-role cut flow. The study's phase-space cuts and frozen
@@ -82,8 +102,12 @@ and zero slope with one layer, or zeros with none.
 The model fits standardized log p, wrapped local φ and η with the study's
 momentum-weighted smooth L1 loss and four 320-wide residual blocks. It
 standardizes on the selected training prefix and selects weights on validation
-momentum magnitude MAE. The defaults follow the budgets in the table.
-`--labels`, `--steps`, and `--batch` override them. `--device cpu` uses FP32.
+momentum magnitude MAE. The default is the full-label budget for every
+recipe except `bst_angle17`, which defaults to its 10k-label budget.
+Pass any recipe name from the tables via `--arm`. `--labels`, `--steps`,
+and `--batch` override the budget. To rerun the 10k-label 218 control, pass
+`--arm distinct218 --labels 10000 --steps 6500 --batch 256`. `--device cpu`
+uses FP32.
 CUDA uses BF16 autocast where available, with `--fp32` to disable it.
 
 ## Replay the archived study
@@ -91,8 +115,10 @@ CUDA uses BF16 autocast where available, with `--fp32` to disable it.
 The November 25 `cluster-mlp-feature-study.zip` research archive contains
 `REPRODUCE.txt`, the original scripts, the frozen roster and field digests in
 `source/replica/`, the held-out comparison in `results/confirmation.json`, the
-frame control in `diagnostics/lab108/xyz_summary.json`, and a checkpoint index
-with job IDs and SHA-256 digests in `models/checkpoints.json`. It pins the
+frame control in `diagnostics/lab108/xyz_summary.json` and the distinct-column
+comparison in `diagnostics/reference/`. Their receipts identify the managed
+jobs that retain the larger checkpoints. `models/checkpoints.json` indexes
+the supplied compact checkpoints and their SHA-256 digests. The archive pins the
 `cvt_cluster_hdf5_20261103_002` manifest to SHA-256
 `f813cad285b0c122764e027062fecdb5c90f3ae87dd4fc119e3300d51fff45c4`.
 The archive's `source/cohort.py --replica` mode reconstructs the exact roster
@@ -107,8 +133,10 @@ python -m clas12_benchmarks.cluster_mlp predict-geometry \
 ```
 
 `predict-geometry` accepts the archived float32 `[N,12,19]` layout or the
-pack's `[N,12,10]` layout (center xyz, the two endpoint xyz triples and log1p
-cluster count). Output rows preserve input order. In the study cache they
+current pack's `[N,12,12]` layout. The latter stores center xyz, two endpoint
+xyz triples, log1p cluster count, mean BMT-C sweep and mean log1p(100 × pitch
+in cm). Older `[N,12,10]` geometry omits the final two fields and supports
+all recipes except `distinct218`. Output rows preserve input order. In the study cache they
 align with `test_truth.npy` and `test_id.npy`. The archived weight files for
 the other recipes are `full-label-16.pt` and `10k-label-17.pt`. A fit with
 the port uses eager updates. The archived results used CUDA graph replay and

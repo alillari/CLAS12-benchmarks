@@ -109,5 +109,5 @@ the raw data; h5py is needed for HDF5 preparation, not packed scoring.
 
 ## CVT cluster MLP
 
-The [cluster MLP guide](CLUSTER_MLP.md) describes three study recipes, HDF5
+The [cluster MLP guide](CLUSTER_MLP.md) describes the study recipes, HDF5
 geometry packing, validation-selected training and keyed Cartesian prediction.

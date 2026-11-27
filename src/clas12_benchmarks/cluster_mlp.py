@@ -1,4 +1,4 @@
-"""Fit or apply a compact, standalone CVT cluster momentum MLP."""
+"""Fit or apply a standalone CVT cluster momentum MLP."""
 
 import argparse
 import csv
@@ -16,8 +16,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from .cluster_mlp_features import ARMS, INITIAL_COLUMNS, encode, rotate
-from .cluster_momentum_geometry import GEOMETRY_SHAPE, MIN_LAYERS
+from .cluster_mlp_features import ARMS, CIRCULAR, INITIAL_COLUMNS, encode, rotate
+from .cluster_momentum_geometry import COMPACT_SHAPE, GEOMETRY_SHAPE, MIN_LAYERS
 from .data import file_sha256
 from .momentum_manifest import TrackManifest
 
@@ -41,6 +41,28 @@ class ResidualMLP(nn.Module):
         return self.norm(x)
 
 
+class CircularReadout(nn.Module):
+    """Decode the azimuth from two FP32 components before computing angular loss."""
+
+    def __init__(self, original):
+        super().__init__()
+        self.outputs = nn.Linear(original.in_features, 4, device=original.weight.device)
+        with torch.no_grad():
+            self.outputs.weight[:3].copy_(original.weight)
+            self.outputs.bias[:3].copy_(original.bias)
+            self.outputs.weight[1].mul_(.22)
+            self.outputs.bias[1].mul_(.22)
+            self.outputs.weight[3].zero_()
+            self.outputs.bias[3].fill_(1.)
+
+    def forward(self, x):
+        with torch.autocast(x.device.type, enabled=False):
+            logp, sine, eta, cosine = self.outputs(x.float()).unbind(-1)
+        cosine = torch.where((sine == 0) & (cosine == 0), 1., cosine)
+        phi = torch.atan2(sine, cosine)
+        return torch.stack((logp, phi / .22, eta), -1)
+
+
 class ClusterMLP(nn.Module):
     def __init__(self, inputs):
         super().__init__()
@@ -52,7 +74,7 @@ class ClusterMLP(nn.Module):
         return self.out(self.layers(self.proj(inputs)))
 
 
-def initial_model(arm, seed):
+def initial_model(arm, seed, device):
     torch.manual_seed(seed)
     # Draw in the original order so the retained coefficients and hidden layers
     # match the paired feature-selection study.
@@ -63,6 +85,9 @@ def initial_model(arm, seed):
         projection.weight.copy_(model.proj.weight[:, columns])
         projection.bias.copy_(model.proj.bias)
     model.proj = projection
+    model = model.to(device)
+    if arm in CIRCULAR:
+        model.out = CircularReadout(model.out)
     return model
 
 
@@ -88,14 +113,14 @@ def decode(standardized, frame, stats):
 
 def geometry_tensors(batch, arm, device):
     raw = torch.tensor(batch, dtype=torch.float32, device=device)
-    if raw.ndim != 3 or raw.shape[1:] not in (GEOMETRY_SHAPE, (12, 19)):
-        raise ValueError("Expected layer geometry with shape [tracks,12,10] or archived [tracks,12,19]")
+    if raw.ndim != 3 or raw.shape[1:] not in (GEOMETRY_SHAPE, COMPACT_SHAPE, (12, 19)):
+        raise ValueError("Expected layer geometry with shape [tracks,12,12], [tracks,12,10], or [tracks,12,19]")
     if raw.shape[-1] == 19:
-        raw = raw[..., [*range(9), 18]]
+        raw = raw[..., [*range(9), 18, 9, 10]]
     count = raw[..., 9]
     if (not torch.isfinite(raw).all() or (count < 0).any()
             or ((count > 0).sum(1) < MIN_LAYERS).any()
-            or (raw[..., :9][count == 0] != 0).any()):
+            or (raw[count == 0] != 0).any()):
         raise ValueError("Invalid layer geometry or fewer than four occupied layers")
     return encode(raw, arm)
 
@@ -185,7 +210,7 @@ def fit(args, device, amp):
     weight = torch.stack((1.7 * weight, torch.full_like(weight, .65),
                           torch.full_like(weight, .75)), 1)
 
-    model = initial_model(args.arm, args.seed).to(device)
+    model = initial_model(args.arm, args.seed, device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=.00065, weight_decay=.003,
                                   fused=device.type == "cuda")
     generator = torch.Generator(device=device).manual_seed(args.seed + 397)
@@ -242,8 +267,11 @@ def load_checkpoint(path, device):
         if (stats[key].shape != (size,) or not torch.isfinite(stats[key]).all()
                 or (key.endswith("_std") and (stats[key] <= 0).any())):
             raise ValueError(f"Invalid checkpoint normalization: {key}")
-    model = ClusterMLP(len(ARMS[arm])).to(device).eval()
+    model = ClusterMLP(len(ARMS[arm])).to(device)
+    if arm in CIRCULAR:
+        model.out = CircularReadout(model.out)
     model.load_state_dict(checkpoint["state"])
+    model.eval()
     return arm, model, stats
 
 

@@ -14,6 +14,19 @@ change a materialized cohort's historical fingerprint.
 The threshold-reporting regression includes a Dice-optimal cut distinct from
 every legacy optimum and verifies its paired event-bootstrap interval.
 
+The distance-weighted noise tests cover CPU event isolation, permutation
+equivariance, gradients through distances, ragged batches, exact distance ties
+and numerical stability at 557 points. The v2 fixture checks validation-only
+selection, held-out row alignment, detector diagnostics and provenance. The
+threshold and bootstrap tests cover conservative ties and paired empty events.
+These tests run through the standard unittest discovery command.
+
+On a CUDA host, run the same architecture checks on the GPU with:
+
+```bash
+TEST_GRAPH_CUDA=1 python -m unittest discover -s tests -p test_distance_graphs.py -v
+```
+
 Protect every implemented benchmark workflow while adding the cluster HDF5
 support described in [the implementation plan](DATA_FORMAT_PLAN.md). Acceptance
 requires correct identities, inputs, targets, training behavior, predictions,

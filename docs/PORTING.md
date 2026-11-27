@@ -69,6 +69,11 @@ the authors' unavailable code. CPU tests check all four operators' gradient upda
 and disk checkpoint reload. The [HDF5 noise runner](NOISE_TAGGING.md) trains and
 evaluates these operators on exact FM adapter cohorts.
 
+The separate [distance-weighted noise study](GRAPH_NOISE_V2.md) implements
+GravNet and GarNet directly in PyTorch from the published operators. It uses
+learned per-event neighborhoods or aggregators and retains the existing
+fixed-geometry SAGEConv classifier as a comparison.
+
 PID still needs a task-specific runner and real-data validation. Momentum
 regression would require a separate task head as an extension of the baseline.
 

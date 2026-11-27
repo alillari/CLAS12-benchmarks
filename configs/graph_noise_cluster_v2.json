@@ -1,0 +1,224 @@
+{
+  "arms": [
+    {
+      "name": "grav_compact",
+      "model": {
+        "architecture": "gravnet",
+        "width": 48,
+        "layers": 3,
+        "propagate": 16,
+        "coordinates": 4,
+        "neighbors": 16
+      },
+      "lr": 0.001,
+      "class_balance": "inverse_frequency"
+    },
+    {
+      "name": "grav_local",
+      "model": {
+        "architecture": "gravnet",
+        "width": 72,
+        "layers": 4,
+        "propagate": 24,
+        "coordinates": 6,
+        "neighbors": 8
+      },
+      "lr": 0.001,
+      "class_balance": "inverse_frequency"
+    },
+    {
+      "name": "grav_wide",
+      "model": {
+        "architecture": "gravnet",
+        "width": 192,
+        "layers": 6,
+        "propagate": 64,
+        "coordinates": 8,
+        "neighbors": 24
+      },
+      "lr": 0.0005,
+      "class_balance": "inverse_frequency"
+    },
+    {
+      "name": "grav_unweighted",
+      "model": {
+        "architecture": "gravnet",
+        "width": 48,
+        "layers": 3,
+        "propagate": 16,
+        "coordinates": 4,
+        "neighbors": 16
+      },
+      "lr": 0.0018,
+      "class_balance": "none"
+    },
+    {
+      "name": "gar_compact",
+      "model": {
+        "architecture": "garnet",
+        "width": 48,
+        "layers": 3,
+        "propagate": 16,
+        "aggregators": 4
+      },
+      "lr": 0.001,
+      "class_balance": "inverse_frequency"
+    },
+    {
+      "name": "gar_deep",
+      "model": {
+        "architecture": "garnet",
+        "width": 72,
+        "layers": 5,
+        "propagate": 24,
+        "aggregators": 8
+      },
+      "lr": 0.001,
+      "class_balance": "inverse_frequency"
+    },
+    {
+      "name": "gar_wide",
+      "model": {
+        "architecture": "garnet",
+        "width": 160,
+        "layers": 5,
+        "propagate": 48,
+        "aggregators": 6
+      },
+      "lr": 0.0005,
+      "class_balance": "inverse_frequency"
+    },
+    {
+      "name": "gar_unweighted",
+      "model": {
+        "architecture": "garnet",
+        "width": 48,
+        "layers": 3,
+        "propagate": 16,
+        "aggregators": 4
+      },
+      "lr": 0.0018,
+      "class_balance": "none"
+    },
+    {
+      "name": "sage_reference",
+      "model": {
+        "architecture": "sage",
+        "width": 256
+      },
+      "lr": 0.0007,
+      "class_balance": "inverse_frequency"
+    }
+  ],
+  "pilot": {
+    "arms": [
+      "grav_compact",
+      "gar_compact",
+      "sage_reference"
+    ],
+    "train": 512,
+    "validation": 256,
+    "seed": 71,
+    "steps": 60,
+    "val_interval": 30,
+    "batch_size": 8,
+    "test": false
+  },
+  "search": {
+    "arms": [
+      "grav_compact",
+      "grav_local",
+      "grav_wide",
+      "grav_unweighted",
+      "gar_compact",
+      "gar_deep",
+      "gar_wide",
+      "gar_unweighted",
+      "sage_reference"
+    ],
+    "train": 4096,
+    "validation": 1024,
+    "seed": 71,
+    "steps": 512,
+    "val_interval": 256,
+    "batch_size": 12,
+    "test": false
+  },
+  "final": {
+    "train": 12000,
+    "validation": 2400,
+    "seed": 71,
+    "steps": 3600,
+    "val_interval": 600,
+    "batch_size": 12,
+    "test": true,
+    "comparators": [
+      {
+        "name": "fm_adapteronly",
+        "model": {
+          "architecture": "fm_adapter"
+        },
+        "lr": 0.0003,
+        "class_balance": "inverse_frequency"
+      }
+    ]
+  },
+  "low_label": {
+    "train": 1024,
+    "validation": 2400,
+    "seed": 71,
+    "steps": 1200,
+    "val_interval": 300,
+    "batch_size": 12,
+    "test": true,
+    "comparators": [
+      {
+        "name": "fm_adapteronly",
+        "model": {
+          "architecture": "fm_adapter"
+        },
+        "lr": 0.0003,
+        "class_balance": "inverse_frequency"
+      },
+      {
+        "name": "fm_m4_final",
+        "model": {
+          "architecture": "fm_frozen",
+          "checkpoint": "/backbones/mike_hdf5_chinchilla_klen1/hdf5_chinchilla_klen1_m4_w512/hdf5_chinchilla_klen1/training_checkpoints/ckpt_best.tar",
+          "sha256": "a6ea644b035cc9cb851824b7999a5d7895d45e973ad52e87fdc99bfebf00ed61"
+        },
+        "lr": 0.0003,
+        "class_balance": "inverse_frequency"
+      }
+    ]
+  },
+  "mid_label": {
+    "train": 4096,
+    "validation": 2400,
+    "seed": 71,
+    "steps": 1200,
+    "val_interval": 300,
+    "batch_size": 12,
+    "test": true,
+    "comparators": [
+      {
+        "name": "fm_adapteronly",
+        "model": {
+          "architecture": "fm_adapter"
+        },
+        "lr": 0.0003,
+        "class_balance": "inverse_frequency"
+      },
+      {
+        "name": "fm_m4_final",
+        "model": {
+          "architecture": "fm_frozen",
+          "checkpoint": "/backbones/mike_hdf5_chinchilla_klen1/hdf5_chinchilla_klen1_m4_w512/hdf5_chinchilla_klen1/training_checkpoints/ckpt_best.tar",
+          "sha256": "a6ea644b035cc9cb851824b7999a5d7895d45e973ad52e87fdc99bfebf00ed61"
+        },
+        "lr": 0.0003,
+        "class_balance": "inverse_frequency"
+      }
+    ]
+  }
+}

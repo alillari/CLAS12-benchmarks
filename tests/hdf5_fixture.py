@@ -6,13 +6,13 @@ import h5py
 import numpy as np
 
 
-def make_publication(root, *, cluster_fields=None):
+def make_publication(root, *, cluster_fields=None, storage_format="cvt-clusters-h5-v1"):
     root = Path(root)
     root.mkdir()
     (root / "geometry").mkdir()
     (root / "geometry/channels.json").write_text('{"unit":"cm"}')
     (root / "recipe.json").write_text('{"reference":"observed_primary_first_layer_hilbert"}')
-    manifest = {"format": "cvt-clusters-h5-v1", "status": "complete", "plan_id": "fixture-plan",
+    manifest = {"format": storage_format, "status": "complete", "plan_id": "fixture-plan",
                 "source_manifest_id": "fixture-inventory", "sources": [], "splits": {}}
     fields = {}
     for sid, split in enumerate(("train", "validation", "test")):

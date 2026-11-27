@@ -22,6 +22,12 @@ Method references and bibliography are available in each upstream README and the
 reporting benchmark results. This repository is an independent CLAS12 adaptation,
 not an official distribution of the FM4NPP authors' external baseline adaptations.
 
+GravNet and GarNet are independent implementations of the layers described
+by [Qasim et al.](https://arxiv.org/abs/1902.07987). The optional FM4NPP comparison
+loads native code and checkpoints from a separately supplied CLAS12 checkout
+and checkpoint store.
+[GravNet and GarNet implementation and replay guide](docs/GRAPH_NOISE_V2.md)
+
 `src/clas12_benchmarks/fm_reference/` contains unmodified, data-only track-finding
 metrics, noise metrics and track eligibility helpers from
 [alillari/CLAS12](https://github.com/alillari/CLAS12) at commit

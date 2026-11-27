@@ -64,6 +64,8 @@ def main():
     hdf5.add_argument("--cvt-pass", choices=("cvt", "cvtrec"), default="cvt")
     hdf5.add_argument("--min-cvt-purity", type=float, default=1.0)
     hdf5.add_argument("--train-track-budgets", nargs="*", type=int, default=[])
+    hdf5.add_argument("--cluster-mlp-geometry", action="store_true",
+                      help="Include measured layer means and require at least four occupied layers")
     audit = sub.add_parser("inspect-momentum", help="Audit a packed momentum manifest and show denominators")
     audit.add_argument("manifest", type=Path)
     score = sub.add_parser("evaluate-momentum", help="Evaluate keyed entrance predictions in GeV")
@@ -82,7 +84,7 @@ def main():
         from .hdf5_momentum import build_manifest
         report = build_manifest(args.cohort, args.output, min_clusters=args.min_clusters,
             max_clusters=args.max_clusters, cvt_pass=args.cvt_pass, min_cvt_purity=args.min_cvt_purity,
-            train_track_budgets=args.train_track_budgets)
+            train_track_budgets=args.train_track_budgets, cluster_mlp_geometry=args.cluster_mlp_geometry)
     elif args.command == "inspect-momentum":
         import numpy as np
         from .momentum_manifest import TrackManifest

@@ -3,7 +3,8 @@
 Independent source and CLAS12 adaptations for external neural benchmarks. The
 initial tracking and semantic ports follow the FM4NPP comparisons. The
 [momentum guide](docs/MOMENTUM.md) covers the shared track manifest and evaluator.
-The [CVT cluster MLP](docs/CLUSTER_MLP.md) provides a standalone momentum regression baseline.
+The [CVT cluster MLP guide](docs/CLUSTER_MLP.md) gives recipes for HDF5 geometry
+packing, validation-selected training, keyed scoring, and archived checkpoint replay.
 The [implementation plan](docs/MOMENTUM_PLAN.md) describes the Miller track
 fitter and the Jahin CMS trigger GNN. The [HDF5 support plan](docs/DATA_FORMAT_PLAN.md)
 describes native cluster access while preserving legacy data workflows.

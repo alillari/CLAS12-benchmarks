@@ -69,9 +69,19 @@ updates at batch 128 and the same test tracks.
 
 ## Train and score a frozen HDF5 cohort
 
-Install the `hdf5` and `tracking` extras and prepare a [frozen HDF5 event
-cohort](MOMENTUM.md#cluster-hdf5-momentum). Set `OUT` to an artifact directory
-and `COHORT` to its cohort JSON.
+Set `DATA_ROOT` to the `cvt-clusters-h5-v1` publication root containing
+`manifest.json` and `OUT` to a writable artifact directory. From the
+repository root, install the benchmark and prepare a frozen cohort:
+
+```bash
+python -m pip install -e '.[hdf5,tracking]'
+python -m clas12_benchmarks.prepare_cohort "$DATA_ROOT" "$OUT/cohort" \
+  --reader hdf5 --train 10000 --val 1000 --test 2000 --seed 1337
+COHORT="$OUT/cohort/cohort.json"
+```
+
+If you already have a frozen cohort, set `COHORT` to its `cohort.json` and
+create `OUT` before running the steps below.
 
 ```bash
 clas12-benchmarks prepare-momentum-hdf5 --cohort "$COHORT" \
@@ -109,6 +119,14 @@ and `--batch` override the budget. To rerun the 10k-label 218 control, pass
 `--arm distinct218 --labels 10000 --steps 6500 --batch 256`. `--device cpu`
 uses FP32.
 CUDA uses BF16 autocast where available, with `--fp32` to disable it.
+For a quick check, add `--device cpu --steps 2 --batch 2` to the default
+aligned-24 training command. The same prediction and evaluation commands
+will run with the resulting checkpoint. Training and validation need at
+least two eligible tracks each, and evaluation needs at least one.
+
+```bash
+python -m unittest discover -s tests -p test_cluster_mlp.py -v
+```
 
 ## Replay the archived study
 
@@ -123,6 +141,17 @@ the supplied compact checkpoints and their SHA-256 digests. The archive pins the
 `f813cad285b0c122764e027062fecdb5c90f3ae87dd4fc119e3300d51fff45c4`.
 The archive's `source/cohort.py --replica` mode reconstructs the exact roster
 from the cluster HDF5. Its training arrays can be used directly with the port.
+Set `STUDY` to the extracted `cluster_feature_study` directory. The bundled
+64-track sample exercises checkpoint inference without rebuilding the cache.
+
+```bash
+python -m clas12_benchmarks.cluster_mlp predict-geometry \
+  --checkpoint "$STUDY/models/full-label-24-native.pt" \
+  --geometry "$STUDY/models/example_geometry.npy" \
+  --output "$OUT/aligned24-example.npy" --device cpu
+```
+
+Set `CD_CACHE` to the rebuilt cache directory for training or held-out replay.
 
 ```bash
 python -m clas12_benchmarks.cluster_mlp train --study-cache "$CD_CACHE" \

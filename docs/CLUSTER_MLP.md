@@ -16,8 +16,14 @@ separate evaluations.
 | Distinct 218, `distinct218` | 1,872,952 | 45,000 × 512 | 35.37 | 2.60 | 0.391 | 0.114 |
 | Distinct 218, `distinct218` | 10,000 | 6,500 × 256 | 54.09 | 3.60 | 0.748 | 0.239 |
 
-The entries average metrics from seeds 23, 42 and 91 on the same 74,789
-held-out simulation tracks. The upstream cohort eligibility join was retained.
+These historical scores average seeds 23, 42 and 91 on the same 74,789
+held-out simulated tracks from the older `cvt_cluster_hdf5_20261103_002`
+release, which has known data-quality limitations. The roster came from an
+earlier matched strip–cluster study and retained its eligibility requirements
+for both representations. The MLP received cluster geometry as input. The
+scores apply to that archived cohort. Performance on the newer cluster
+publication requires a fresh evaluation.
+
 The roster used four or more occupied layers, observed `0 < p < 3 GeV/c`, and
 `35° ≤ θ ≤ 125°`. Each test track was a positive hadron. The central half-width
 is half the distance between the 16th and 84th percentiles of signed Δp/p.

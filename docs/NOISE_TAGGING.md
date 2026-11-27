@@ -1,6 +1,18 @@
 # HDF5 noise tagging
 
-The runner trains GATConv, GCNConv, GraphConv and SAGEConv on the exact event
+Use the [GravNet and GarNet study guide](GRAPH_NOISE_V2.md) for dynamic-neighbor
+and learned-aggregator baselines, including the matched SAGEConv and optional
+FM4NPP controls. Its main recipe uses the v2 cluster release on a02c, keeps
+published split assignments, and selects checkpoints and operating thresholds
+using validation. It also supports importing an exact compatible FM roster.
+
+Both workflows use complete events and the same four-cluster primary truth
+rule. Comparisons across releases are approximate because event reconstruction
+and historical evaluation contracts can differ.
+
+## Fixed-geometry GNNs
+
+The fixed-geometry runner trains GATConv, GCNConv, GraphConv and SAGEConv on the exact event
 lists exported by a CLAS12 FM noise adapter. Use `cohorts.json` and the
 `data_contract.plan_id` from that adapter evaluation. The runner verifies the
 publication, event identities and split membership, and fingerprints the selected

@@ -12,6 +12,8 @@ from pathlib import Path, PurePosixPath
 import numpy as np
 
 FORMAT = "cvt-clusters-h5-v1"
+FORMAT_V2 = "cvt-clusters-h5-v2"
+CLUSTER_FORMATS = (FORMAT, FORMAT_V2)
 COHORT_SCHEMA = "clas12_baseline_cohort_v2"
 NOISE_POLICY = "primary_unassigned_is_noise_v1"
 NATIVE_NOISE_POLICY = "primary_valid_only_v1"
@@ -54,10 +56,11 @@ class ClusterSource:
             raise ValueError("max_open must be positive")
         self.manifest = json.loads(self._path("manifest.json").read_text())
         self.schema = json.loads(self._path("schema.json").read_text())
-        if (self.manifest.get("format") != FORMAT or self.manifest.get("status") != "complete"
-                or self.schema.get("format") != FORMAT or not self.manifest.get("plan_id")
+        self.format = self.manifest.get("format")
+        if (self.format not in CLUSTER_FORMATS or self.manifest.get("status") != "complete"
+                or self.schema.get("format") != self.format or not self.manifest.get("plan_id")
                 or not self.manifest.get("source_manifest_id")):
-            raise ValueError(f"Expected complete {FORMAT} publication: {self.root}")
+            raise ValueError(f"Expected complete CVT cluster HDF5 publication: {self.root}")
         required = {"events": {"source_id": ("int32", []), "original_ordinal": ("int64", []),
                                 "run": ("int32", []), "event": ("int32", [])},
                     "clusters": {"xyz": ("float32", [3]), "primary_noise": ("int8", []),
@@ -70,7 +73,7 @@ class ClusterSource:
             for key, (dtype, shape) in columns.items():
                 field = self.schema.get("fields", {}).get(domain, {}).get(key)
                 if field is None or np.dtype(field["dtype"]) != np.dtype(dtype) or field["row_shape"] != shape:
-                    raise ValueError(f"Unsupported {FORMAT} schema field: {domain}/{key}")
+                    raise ValueError(f"Unsupported {self.format} schema field: {domain}/{key}")
         if split not in {"train", "validation", "test"} or split not in self.manifest["splits"]:
             raise ValueError(f"Unsupported or absent source split: {split}")
         self.sources = {}
@@ -120,7 +123,7 @@ class ClusterSource:
 
     @property
     def contract(self):
-        return {"format": FORMAT, "token_kind": "clusters", "split": self.split,
+        return {"format": self.format, "token_kind": "clusters", "split": self.split,
                 "plan_id": self.manifest["plan_id"],
                 "source_manifest_id": self.manifest["source_manifest_id"],
                 "fingerprints": self.fingerprints}
@@ -137,7 +140,7 @@ class ClusterSource:
             name, count = self.parts[part]
             file = h5py.File(self._path(name), "r")
             try:
-                if (file.attrs.get("format") != FORMAT or file.attrs.get("complete") != 1
+                if (file.attrs.get("format") != self.format or file.attrs.get("complete") != 1
                         or file.attrs.get("plan_id") != self.manifest["plan_id"]
                         or file.attrs.get("part_key") != name or file.attrs.get("events") != count):
                     raise ValueError(f"Part attributes disagree with manifest: {name}")

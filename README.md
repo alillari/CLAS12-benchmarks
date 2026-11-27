@@ -8,8 +8,8 @@ fitter and the Jahin CMS trigger GNN. The [HDF5 support plan](docs/DATA_FORMAT_P
 describes native cluster access while preserving legacy data workflows.
 The [testing plan](docs/TESTING_PLAN.md) defines regression checks and acceptance
 gates for existing workflows and the HDF5 implementation.
-This repository is separate from the
-CLAS12 foundation-model repository and does not import its models, trainers or checkpoint code.
+The independent benchmarks run in this repository. The optional FM4NPP noise
+controls import the native head and backbone from a pinned CLAS12 checkout.
 
 ## Initial port
 
@@ -17,7 +17,8 @@ CLAS12 foundation-model repository and does not import its models, trainers or c
 |---|---|
 | EggNet | Upstream source, CLAS12 exporter, training and DBSCAN evaluation |
 | Exa.TrkX | Upstream embedding/filter forwards and Torch Interaction Network port |
-| GATConv, GCNConv, GraphConv, SAGEConv | PyTorch Geometric models and [matched HDF5 noise-tagging benchmark](docs/NOISE_TAGGING.md) |
+| GATConv, GCNConv, GraphConv, SAGEConv | PyTorch Geometric models and [matched HDF5 noise-tagging benchmark](docs/NOISE_TAGGING.md#fixed-geometry-gnns) |
+| GravNet and GarNet | Native PyTorch models and [cluster noise tagging on HDF5 v2](docs/GRAPH_NOISE_V2.md) |
 | OneFormer3D | Upstream source and S3DIS configuration; CLAS12 adaptation pending |
 
 The FM4NPP authors' external-baseline adaptations were not present in the public
@@ -54,8 +55,9 @@ python -m unittest discover -s tests -v
 ```
 
 The `graphs` extra provides the graph models and EggNet data export. The
-[HDF5 noise-tagging runner](docs/NOISE_TAGGING.md) also uses the `hdf5` and
-`evaluation` extras.
+[HDF5 noise-tagging runners](docs/NOISE_TAGGING.md) use the `hdf5` and
+`evaluation` extras. GravNet and GarNet need PyTorch. The full comparison uses
+`graphs` for SAGEConv and `plotting` for the evaluation figures.
 It does not install the three upstream applications. Each has its own dependencies;
 use separate environments for those. Original requirement files are preserved in
 `vendor/`. The standalone tracking runner uses the `tracking` extra and native
@@ -68,8 +70,9 @@ The tracking usage guide describes the optional TensorFlow/Sonnet port-parity ch
 
 ## Use CLAS12 data
 
-Native cluster HDF5 (`cvt-clusters-h5-v1`) and legacy RaggedMmap are supported.
-Use `--reader hdf5` when preparing the new product; the default reader preserves
+The shared cluster reader accepts `cvt-clusters-h5-v1` and
+`cvt-clusters-h5-v2`. Legacy RaggedMmap remains available.
+Use `--reader hdf5` when preparing an HDF5 cohort for a compatible workflow; the default reader preserves
 the old workflow. See the [HDF5 workflow](docs/TRACKING.md#native-cluster-hdf5)
 and [HDF5 momentum packing](docs/MOMENTUM.md#cluster-hdf5-momentum).
 HDF5 cohorts reference read-only shards and fingerprint selected content; they
@@ -112,8 +115,10 @@ mapping differs from FM4NPP's 48-layer TPC radius encoding. No TPC geometry or d
 energy is silently applied to CLAS12. For xyz inputs, `node_features` requires an
 explicit position-only opt-in; energy-bearing inputs must declare `exyz`.
 
-Graph classifiers return per-point semantic logits. The [noise-tagging runner](docs/NOISE_TAGGING.md)
-imports an FM adapter cohort and trains binary cluster classifiers on native HDF5 data.
+The [noise-tagging guide](docs/NOISE_TAGGING.md) covers binary cluster
+classification, including exact FM cohort imports and the validation-first
+GravNet/GarNet study. That study saves held-out classifier curves, detector and
+occupancy breakdowns, paired event intervals and GB10 profiles.
 
 ## Experiment boundary
 

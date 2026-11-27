@@ -5,7 +5,12 @@ RaggedMmap cohorts, frozen momentum manifests, predictions, and score replay.
 The selected new input is `cvt-clusters-h5-v1`. Support its native event,
 particle, and reconstruction fields through a shared storage interface.
 
-Cluster HDF5 support is implemented on this branch. The design and review
+The shared cluster reader now also accepts the native `cvt-clusters-h5-v2`
+release. The [distance-weighted noise study](GRAPH_NOISE_V2.md) qualifies v2
+clusters using the same event and ownership fields. The original v1
+qualification below records the input to the storage refactor.
+
+Cluster HDF5 support is implemented. The design and review
 boundaries below describe its contract; the testing plan records qualification.
 The [testing plan](TESTING_PLAN.md) defines the current verified baseline,
 independent expected results, and acceptance gates for each implementation stage.

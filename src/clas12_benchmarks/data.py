@@ -134,7 +134,7 @@ class Cohort:
         return self.spec["schema"] == "clas12_baseline_cohort_v2"
 
     def _init_hdf5(self):
-        from .hdf5 import ClusterSource, FORMAT, FEATURE_RECIPE, NOISE_POLICIES, PID_POLICY
+        from .hdf5 import ClusterSource, CLUSTER_FORMATS, FEATURE_RECIPE, NOISE_POLICIES, PID_POLICY
         self.sha256 = file_sha256(self.path)
         self.roles = self.spec["roles"]
         if set(self.roles) != {"train", "val", "test"}:
@@ -153,7 +153,7 @@ class Cohort:
         seen, contracts = {}, set()
         try:
             for name, spec in self.spec["datasets"].items():
-                if (spec.get("storage_format") != FORMAT or spec.get("token_kind") != "clusters"
+                if (spec.get("storage_format") not in CLUSTER_FORMATS or spec.get("token_kind") != "clusters"
                         or spec.get("feature_recipe") != FEATURE_RECIPE or spec.get("input_layout") != "xyz"
                         or spec.get("noise_policy") not in NOISE_POLICIES
                         or spec.get("pid_policy") != PID_POLICY):
@@ -168,7 +168,7 @@ class Cohort:
                     root = self.path.parent / root
                 source = ClusterSource(root, spec["source_split"])
                 self.sources[name] = source
-                if source.contract != spec["source_contract"]:
+                if source.format != spec["storage_format"] or source.contract != spec["source_contract"]:
                     raise ValueError(f"Source metadata/contract drift: {name}")
                 rows = source.identities(requested[name])
                 if source.content_digest(requested[name]) != spec["selected_content_sha256"]:
@@ -304,11 +304,9 @@ def classification_edges(positions, k=50, radius=1.0):
     if n < 2:
         return np.empty((2, 0), dtype=np.int64)
     distances, indices = cKDTree(positions).query(positions, k=min(k + 1, n))
-    edges = []
-    for center, (ds, ns) in enumerate(zip(distances, indices)):
-        selected = ns[(ns != center) & (ds < radius)][:k]
-        edges.extend((int(neighbor), center) for neighbor in selected)
-    return np.asarray(edges, dtype=np.int64).reshape(-1, 2).T
+    valid = (indices != np.arange(n)[:, None]) & (distances < radius)
+    centers, columns = np.nonzero(valid & (valid.cumsum(axis=1) <= k))
+    return np.stack((indices[centers, columns], centers)).astype(np.int64, copy=False)
 
 
 def positive_edges(labels, max_edges=1_000_000):

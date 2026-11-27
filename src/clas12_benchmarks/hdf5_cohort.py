@@ -9,7 +9,7 @@ import tempfile
 import numpy as np
 
 from .data import Cohort, source_key
-from .hdf5 import ClusterSource, COHORT_SCHEMA, FORMAT, FEATURE_RECIPE, NOISE_POLICY, PID_POLICY
+from .hdf5 import ClusterSource, COHORT_SCHEMA, FEATURE_RECIPE, NOISE_POLICY, PID_POLICY
 
 SPLITS = {"train": "train", "val": "validation", "test": "test"}
 
@@ -19,15 +19,15 @@ def write_json(path, value):
 
 
 @contextmanager
-def publication(output):
-    """Reserve a new directory; publish cohort JSON last, clean up on failure."""
+def publication(output, *, manifest_name="cohort.json"):
+    """Reserve a new directory and publish its manifest last."""
     output = Path(output)
     output.mkdir(parents=True, exist_ok=False)
     try:
         with tempfile.TemporaryDirectory(prefix=".prepare-", dir=output) as temporary:
             stage = Path(temporary)
             yield stage
-            files = sorted(stage.iterdir(), key=lambda p: p.name == "cohort.json")
+            files = sorted(stage.iterdir(), key=lambda p: p.name == manifest_name)
             for path in files:
                 os.link(path, output / path.name)
     except BaseException:
@@ -56,7 +56,7 @@ def cohort_spec(sources, members, scales, noise_policy=NOISE_POLICY):
         source = sources[split]
         indices = list(map(int, members[role]))
         datasets[split] = {"root": str(source.root), "source_split": split,
-                           "storage_format": FORMAT, "token_kind": "clusters", "input_layout": "xyz",
+                           "storage_format": source.format, "token_kind": "clusters", "input_layout": "xyz",
                            "feature_recipe": FEATURE_RECIPE, "noise_policy": noise_policy,
                            "pid_policy": PID_POLICY, "extra_targets": ["coatjava_seg_pred", "pid_target", "noise_target"],
                            "source_contract": source.contract,

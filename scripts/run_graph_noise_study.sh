@@ -4,9 +4,9 @@ set -euo pipefail
 usage() {
     cat >&2 <<'USAGE'
 Usage:
-  run_graph_noise_study.sh cohort DATA_ROOT OUTPUT
+  run_graph_noise_study.sh cohort DATA_ROOT OUTPUT [COHORT_OPTIONS...]
   run_graph_noise_study.sh {pilot|search} COHORT OUTPUT [DEVICE]
-  run_graph_noise_study.sh {final|low_label|mid_label} COHORT OUTPUT DEVICE SEARCH_SUMMARY [M4_FEATURE_CACHE]
+  run_graph_noise_study.sh {final|low_label|mid_label} COHORT OUTPUT DEVICE SEARCH_SUMMARY [M4_FEATURE_CACHE | --without-fm]
   run_graph_noise_study.sh plot RESULTS OUTPUT
 
 For FM controls, set CLAS12_FM_SOURCE to the approved FM4NPP checkout.
@@ -21,8 +21,8 @@ config=${GRAPH_NOISE_CONFIG:-"$repo/configs/graph_noise_cluster_v2.json"}
 stage=${1:-}
 case "$stage" in
     cohort)
-        [[ $# == 3 ]] || usage
-        exec python -m clas12_benchmarks.graph_noise_data --data-root "$2" --output "$3"
+        [[ $# -ge 3 ]] || usage
+        exec python -m clas12_benchmarks.graph_noise_data --data-root "$2" --output "$3" "${@:4}"
         ;;
     pilot|search)
         [[ $# == 3 || $# == 4 ]] || usage
@@ -32,9 +32,11 @@ case "$stage" in
     final|low_label|mid_label)
         [[ $# == 5 || $# == 6 ]] || usage
         cache_options=()
-        if [[ $# == 6 ]]; then
-            cache_options=(--fm-features "$6")
-        fi
+        case "${6:-}" in
+            --without-fm) cache_options=(--without-fm) ;;
+            "") ;;
+            *) cache_options=(--fm-features "$6") ;;
+        esac
         exec python -m clas12_benchmarks.graph_noise --phase "$stage" --config "$config" \
             --cache "$2" --output "$3" --device "$4" --selection "$5" "${cache_options[@]}"
         ;;

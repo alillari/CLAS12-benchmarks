@@ -71,13 +71,15 @@ No per-strip comparison was included on this release.
 
 ## Replaying the study
 
-Install the benchmark in a supported PyTorch environment. The full study
-uses the `graphs,hdf5,evaluation,plotting` extras. GravNet and GarNet also run
+From the repository root, install the full study dependencies with
+`python -m pip install -e '.[graphs,hdf5,evaluation,plotting]'` in an
+environment with the appropriate PyTorch build. GravNet and GarNet also run
 with `tracking,hdf5,plotting` when the configuration excludes SAGEConv and
 the optional native FM controls. The GB10 run used the local ARM64 image
 `clas12-explore/conv-noise-pyg24-a02c-20261111-v1:local`.
 
-From the repository root, set `CLAS12_FM_SOURCE` to the pinned native source
+Set `DATA_ROOT` to the cluster publication root containing `manifest.json` and
+`RUN_ROOT` to a writable artifact directory. Set `CLAS12_FM_SOURCE` to the pinned native source
 checkout for the FM controls. On a02c it came from the immutable source snapshot
 for `conv-m4-c-10k-s43-20261126-v1`, based on CLAS12 commit
 `692aa26ee57bdb4d55151568009fbf26e3d8aef8`. Set `GRAPH_NOISE_CONFIG` if the
@@ -91,6 +93,25 @@ scripts/run_graph_noise_study.sh search "$RUN_ROOT/cohort" "$RUN_ROOT/search" cp
 scripts/run_graph_noise_study.sh final "$RUN_ROOT/cohort" "$RUN_ROOT/final" cpu \
     "$RUN_ROOT/search/summary.json"
 scripts/run_graph_noise_study.sh plot "$RUN_ROOT/final" "$RUN_ROOT/plots"
+```
+
+For the three graph models with no native FM4NPP dependencies, leave
+`CLAS12_FM_SOURCE` unset, use the same cohort, pilot and search commands, and
+skip the FM controls in the held-out fit:
+
+```bash
+scripts/run_graph_noise_study.sh final "$RUN_ROOT/cohort" "$RUN_ROOT/graph-only" cpu \
+    "$RUN_ROOT/search/summary.json" --without-fm
+scripts/run_graph_noise_study.sh plot "$RUN_ROOT/graph-only" "$RUN_ROOT/graph-only-plots"
+```
+
+For a quick test on a smaller publication, the cohort command accepts
+`--train`, `--validation`, `--test` and `--seed`. Point `GRAPH_NOISE_CONFIG`
+at a copy of the recipe with the phase budgets reduced to fit that cohort.
+The CPU workflow regression test uses a synthetic HDF5 v2 publication:
+
+```bash
+python -m unittest discover -s tests -p test_graph_noise_workflow.py -v
 ```
 
 The optional frozen-feature cache runs on CUDA. Use the checkpoint and SHA256

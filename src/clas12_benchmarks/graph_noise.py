@@ -322,7 +322,7 @@ def select(arms, prior):
     return [item[1] for item in models.values()]
 
 
-def run(cache, config, phase, output, device, selection=None, fm_cache=None, *, selection_sha256=None):
+def run(cache, config, phase, output, device, selection=None, fm_cache=None, *, selection_sha256=None, without_fm=False):
     device = torch.device(device)
     if device.type == "cuda" and not torch.cuda.is_available():
         raise ValueError("CUDA is unavailable")
@@ -337,6 +337,8 @@ def run(cache, config, phase, output, device, selection=None, fm_cache=None, *, 
         arms = select(search_arms, selection) + settings.get("comparators", [])
     else:
         arms = [arm for arm in search_arms if arm["name"] in settings["arms"]]
+    if without_fm:
+        arms = [arm for arm in arms if arm["model"]["architecture"] not in {"fm_adapter", "fm_frozen"}]
     if not arms:
         raise ValueError("No arms selected")
     receipt = json.loads((cache / "cohort.json").read_text())
@@ -406,11 +408,13 @@ def main():
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--selection", type=Path)
     parser.add_argument("--fm-features", type=Path)
+    parser.add_argument("--without-fm", action="store_true", help="Skip native FM4NPP controls")
     args = parser.parse_args()
     selection = args.selection.read_bytes() if args.selection else None
     run(args.cache, json.loads(args.config.read_text()), args.phase, args.output, args.device,
         json.loads(selection) if selection is not None else None, args.fm_features,
-        selection_sha256=hashlib.sha256(selection).hexdigest() if selection is not None else None)
+        selection_sha256=hashlib.sha256(selection).hexdigest() if selection is not None else None,
+        without_fm=args.without_fm)
 
 
 if __name__ == "__main__":

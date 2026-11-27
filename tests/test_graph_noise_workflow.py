@@ -38,8 +38,9 @@ class GraphNoiseWorkflowTests(unittest.TestCase):
         arm = {"name": "grav_small", "lr": .001, "class_balance": "inverse_frequency",
                "model": dict(architecture="gravnet", width=8, layers=1, propagate=4, neighbors=3)}
         settings = dict(train=3, validation=3, steps=2, val_interval=1, batch_size=1, seed=71)
+        fm_control = dict(name="fm_control", model=dict(architecture="fm_adapter"))
         config = {"arms": [arm], "search": dict(**settings, arms=[arm["name"]], test=False),
-                  "final": dict(**settings, test=True)}
+                  "final": dict(**settings, test=True, comparators=[fm_control])}
         search = tmp_path / "search"
         run(cache, config, "search", search, "cpu")
         selected = json.loads((search / "summary.json").read_text())
@@ -47,8 +48,9 @@ class GraphNoiseWorkflowTests(unittest.TestCase):
         result = tmp_path / "result"
         with self.assertRaisesRegex(ValueError, "validation-only"):
             run(cache, config, "final", result, "cpu")
-        run(cache, config, "final", result, "cpu", selected)
+        run(cache, config, "final", result, "cpu", selected, without_fm=True)
         report = json.loads((result / "summary.json").read_text())
+        self.assertEqual(list(report["arms"]), [arm["name"]])
         self.assertEqual(report["cohort"]["splits"]["train"]["contract"]["format"], FORMAT_V2)
         test = report["arms"][arm["name"]]["test"]
         self.assertEqual(test["signal_clusters"], 12)

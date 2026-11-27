@@ -117,8 +117,10 @@ explicit position-only opt-in; energy-bearing inputs must declare `exyz`.
 
 The [noise-tagging guide](docs/NOISE_TAGGING.md) covers binary cluster
 classification, including exact FM cohort imports and the validation-first
-GravNet/GarNet study. That study saves held-out classifier curves, detector and
-occupancy breakdowns, paired event intervals and GB10 profiles.
+[GravNet/GarNet study](docs/GRAPH_NOISE_V2.md#replaying-the-study). The run
+recipes cover the three graph classifiers and the optional FM4NPP controls.
+The study saves held-out curves, detector and occupancy breakdowns, paired
+event intervals and GB10 profiles.
 
 ## Experiment boundary
 

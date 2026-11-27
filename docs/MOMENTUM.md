@@ -106,3 +106,8 @@ The evaluator dispatches by pack schema, rejects incompatible prediction
 fingerprints/units and legacy companion rows for HDF5, and retains the existing
 all-track/common-CVT metric definitions. Both formats remain readable without
 the raw data; h5py is needed for HDF5 preparation, not packed scoring.
+
+## CVT cluster MLP
+
+The [cluster MLP guide](CLUSTER_MLP.md) describes the study recipes, HDF5
+geometry packing, validation-selected training and keyed Cartesian prediction.

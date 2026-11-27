@@ -7,6 +7,9 @@ from tempfile import NamedTemporaryFile
 
 import numpy as np
 
+from .cluster_momentum_geometry import (
+    GEOMETRY_SCHEMA, GEOMETRY_SHAPE, GEOMETRY_SHAPES, LAYER_FIELDS, MIN_LAYERS, aggregate_layers,
+)
 from .data import Cohort, event_key, file_sha256
 from .hdf5 import POINT_FIELDS, update_digest
 
@@ -56,7 +59,8 @@ def _reference(rows, tid, domain, pass_id, min_purity):
 
 
 def build_manifest(cohort_path, destination, *, min_clusters=12, max_clusters=100,
-                   cvt_pass="cvt", min_cvt_purity=1.0, train_track_budgets=()):
+                   cvt_pass="cvt", min_cvt_purity=1.0, train_track_budgets=(),
+                   cluster_mlp_geometry=False):
     if (type(min_clusters) is not int or type(max_clusters) is not int
             or not 1 <= min_clusters <= max_clusters or cvt_pass not in {"cvt", "cvtrec"}
             or not np.isfinite(min_cvt_purity) or not 0 <= min_cvt_purity <= 1):
@@ -70,6 +74,9 @@ def build_manifest(cohort_path, destination, *, min_clusters=12, max_clusters=10
               *("reco.contributors." + k for k in ("pass_id", "track_row", "tid", "count"))]
     output = {name: [] for name in (*IDENTITY_FIELDS, "segment_label", "source_event_index",
                                     "truth_gev", "cvt_gev", "xyz_cm", "point_index", "lengths")}
+    if cluster_mlp_geometry:
+        fields.extend(LAYER_FIELDS)
+        output["cluster_layer_geometry"] = []
     sizes, reports, digest = {}, {}, hashlib.sha256()
     with Cohort(cohort_path) as cohort:
         if not cohort.is_hdf5:
@@ -78,6 +85,8 @@ def build_manifest(cohort_path, destination, *, min_clusters=12, max_clusters=10
             counts = {"events": len(cohort.roles[input_role]), "segments": 0, "length_excluded": 0,
                       "invalid_truth": 0, "accepted": 0, "cvt_valid": 0,
                       "cvt_ambiguous": 0, "cvt_missing_or_unqualified": 0}
+            if cluster_mlp_geometry:
+                counts["layer_coverage_excluded"] = 0
             for member in cohort.roles[input_role]:
                 source = cohort.sources[member["dataset"]]
                 index = member["index"]
@@ -111,9 +120,20 @@ def build_manifest(cohort_path, destination, *, min_clusters=12, max_clusters=10
                     row = int(np.flatnonzero(tids == tid)[0])
                     truth = rows["particles.observed_momentum"][row]
                     valid = rows["particles.observed_valid"][row]
-                    if not valid.all() or not np.isfinite(truth).all():
+                    if (not valid.all() or not np.isfinite(truth).all()
+                            or (cluster_mlp_geometry and not np.any(truth))):
                         counts["invalid_truth"] += 1
                         continue
+                    if cluster_mlp_geometry:
+                        geometry = aggregate_layers(
+                            xyz[indices], rows["clusters.endpoints"][indices], rows["clusters.detector"][indices],
+                            rows["clusters.layer"][indices], rows["clusters.pitch"][indices],
+                            rows["clusters.length"][indices],
+                        )
+                        if np.count_nonzero(geometry[:, 9]) < MIN_LAYERS:
+                            counts["layer_coverage_excluded"] += 1
+                            continue
+                        output["cluster_layer_geometry"].append(geometry)
                     cvt, reason = _reference(rows, tid, domain, 0 if cvt_pass == "cvt" else 1, min_cvt_purity)
                     counts["accepted"] += 1
                     counts["cvt_" + reason] += 1
@@ -135,6 +155,8 @@ def build_manifest(cohort_path, destination, *, min_clusters=12, max_clusters=10
                     "max_clusters": max_clusters, "cvt_pass": cvt_pass, "min_cvt_purity": min_cvt_purity,
                     "cvt_policy": "single_qualified_unique_owner_same_pass_v1",
                     "role_sizes": sizes, "selection_counts": reports}
+    if cluster_mlp_geometry:
+        metadata["cluster_layer_geometry"] = GEOMETRY_SCHEMA
     arrays = {}
     for name, values in output.items():
         if name == "lengths":
@@ -142,6 +164,8 @@ def build_manifest(cohort_path, destination, *, min_clusters=12, max_clusters=10
         if name in {"xyz_cm", "point_index"}:
             arrays[name] = np.concatenate(values) if values else np.empty((0, 3) if name == "xyz_cm" else (0,),
                                                                          dtype=np.float32 if name == "xyz_cm" else np.int64)
+        elif name == "cluster_layer_geometry":
+            arrays[name] = np.asarray(values, dtype=np.float32).reshape(-1, *GEOMETRY_SHAPE)
         elif name in {"truth_gev", "cvt_gev"}:
             arrays[name] = np.asarray(values, dtype=np.float64).reshape(-1, 3)
         else:
@@ -175,6 +199,11 @@ class PackedTracks:
                 raise ValueError("Unsupported HDF5 momentum pack/units")
             required = {*IDENTITY_FIELDS, "segment_label", "source_event_index", "truth_gev", "cvt_gev",
                         "xyz_cm", "point_index", "offsets"}
+            geometry_schema = self.meta.get("cluster_layer_geometry")
+            if isinstance(geometry_schema, str) and geometry_schema in GEOMETRY_SHAPES:
+                required.add("cluster_layer_geometry")
+            elif geometry_schema is not None:
+                raise ValueError("Unsupported cluster layer geometry")
             if (set(self.meta.get("array_sha256", {})) != required
                     or set(archive.files) != required | {"metadata"}
                     or self.meta.get("target") != "observed_direct_primary_momentum"
@@ -201,6 +230,16 @@ class PackedTracks:
                 or not np.all((np.diff(self.offsets) >= self.meta["min_clusters"])
                               & (np.diff(self.offsets) <= self.meta["max_clusters"]))):
             raise ValueError("Invalid packed track arrays")
+        if geometry_schema is not None:
+            geometry = self.cluster_layer_geometry
+            if geometry.shape != (n, *GEOMETRY_SHAPES[geometry_schema]) or geometry.dtype != np.float32:
+                raise ValueError("Invalid packed cluster layer geometry shape or dtype")
+            occupancy = geometry[..., 9]
+            if (not np.isfinite(geometry).all() or np.any(occupancy < 0)
+                    or np.any(np.count_nonzero(occupancy, axis=1) < MIN_LAYERS)
+                    or np.any(geometry[occupancy == 0])
+                    or np.any(~np.any(self.truth, axis=1))):
+                raise ValueError("Invalid packed cluster layer geometry")
         for name in (*IDENTITY_FIELDS, "segment_label", "source_event_index"):
             value = getattr(self, name)
             if (value.shape != (n,) or (name == "source_manifest_id" and value.dtype.kind != "U")
